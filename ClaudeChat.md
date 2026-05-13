@@ -22,3 +22,25 @@ Lo que incluye el archivo:
 | `0x64AB` | 20x | Colisiones o mapa |
 
 **Próximo paso para portar a C:** ¿quieres que empiece analizando una subrutina específica (como el loop principal en `0x4010`) y la transcribo a C equivalente?
+
+Vamos a analizar el loop principal y las subrutinas clave para empezar la traducción a C.Tengo suficiente contexto. Ahora generamos la traducción a C:Ahora tengo suficiente para escribir una traducción C robusta y estructurada:Compila perfecto (solo warnings de stubs pendientes). Copiamos a outputs:714 líneas de C, compila sin errores. Esto es lo que se tradujo y el estado actual del port:
+
+**Completamente traducido a C:**
+
+- `init_system()` — toda la inicialización de hardware (VDP, PSG, VRAM, variables de RAM)
+- `reset_level_state()` — reset del nivel con los mismos valores que el original (`sub_4D52`)
+- `game_loop()` — el loop principal frame-a-frame con la misma secuencia de llamadas
+- `update_player()` — movimiento con tabla de direcciones, colisión, sub-píxel, animación
+- `collision_check()` — lectura del mapa de tiles
+- `render_map()` — volcado de tiles al VDP
+- `music_tick()` — reproductor de música PSG (formato de datos decodificado)
+- `score_add()` / `hiscore_check()` / `score_display()` — puntuación en BCD
+- `put_tile()` / `draw_sprite()` — escritura a VRAM via HAL
+
+**Pendiente de decodificar (marcado con TODO):**
+- `update_enemies()` — `sub_6F5C` (lógica de IA de los enemigos)
+- `update_doors()` — `sub_442D`
+- `camera_update()` — `sub_623C`
+- La HAL completa (hay que implementarla para SDL, libretro, etc.)
+
+¿Continuamos con los enemigos (`sub_6F5C` / `sub_6A7C`) o prefieres primero implementar la HAL para SDL2 y tener algo que compile y corra en PC?

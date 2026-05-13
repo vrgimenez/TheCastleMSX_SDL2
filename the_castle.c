@@ -1,0 +1,714 @@
+/*
+ * THE CASTLE (ASCII, 1986) - MSX ROM → C Port
+ * ============================================
+ * Disassembled from: The_Castle_-_ASCII__1986___GoodMSX___356_.rom
+ * ROM: 32KB, ORG 0x4000, entry point 0x4010
+ *
+ * Portability target: C99, platform-agnostic core logic.
+ * All MSX BIOS calls are wrapped behind a HAL (Hardware Abstraction Layer)
+ * so the game logic compiles and runs without MSX hardware.
+ *
+ * Register mapping convention used throughout:
+ *   Z80 A  → uint8_t  a  (accumulator)
+ *   Z80 BC → uint16_t bc, with b = hi byte, c = lo byte
+ *   Z80 DE → uint16_t de, with d = hi byte, e = lo byte
+ *   Z80 HL → uint16_t hl, used as address or 16-bit value
+ *   Z80 F  → flags reconstructed from C expressions (Z, C, NZ, NC)
+ *
+ * RAM map (MSX Work RAM used by the game, base 0xE000-0xEAFF):
+ *   The game uses two RAM regions:
+ *     0xE000-0xE3FF : map/level data area
+ *     0xEA00-0xEAFF : game state variables
+ *
+ * Build: gcc -std=c99 -Wall -o the_castle the_castle.c
+ */
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdio.h>
+
+/* ==========================================================================
+ * PLATFORM HAL - replace these with real implementations for your target
+ * ========================================================================== */
+
+/* VDP (Video Display Processor - TMS9918) abstraction */
+void hal_vdp_write_reg(uint8_t reg, uint8_t val);   /* Write VDP register     */
+void hal_vdp_write_vram(uint16_t addr, uint8_t val);/* Write byte to VRAM     */
+uint8_t hal_vdp_read_vram(uint16_t addr);           /* Read byte from VRAM    */
+void hal_vdp_fill_vram(uint16_t addr, uint8_t val, uint16_t count);
+void hal_vdp_copy_to_vram(uint16_t dst, const uint8_t *src, uint16_t count);
+void hal_vdp_copy_from_vram(uint16_t src, uint8_t *dst, uint16_t count);
+void hal_vdp_init_screen2(void);   /* MSX BIOS INITXT / INIT32 mode setup    */
+void hal_vdp_disable_screen(void); /* BIOS DISSCR                            */
+void hal_vdp_clear_sprites(void);  /* BIOS CLRSPR                            */
+
+/* PSG (AY-3-8910 sound) abstraction */
+void hal_psg_write(uint8_t reg, uint8_t val); /* BIOS WRTPSG */
+uint8_t hal_psg_read(uint8_t reg);            /* BIOS RDPSG  */
+
+/* Input */
+uint8_t hal_joystick_read(uint8_t port); /* BIOS joystick/keyboard scan */
+bool hal_key_pressed(void);              /* Any key pressed             */
+
+/* Timing */
+void hal_wait_vsync(void);   /* Wait for vertical blank interrupt */
+void hal_delay(uint8_t frames);
+
+/* ==========================================================================
+ * VRAM LAYOUT (MSX Screen 2 / Graphic 2)
+ *   Pattern table  : 0x0000  (256 patterns × 8 bytes = 2KB)
+ *   Color table    : 0x2000  (256 patterns × 8 bytes = 2KB)
+ *   Name table     : 0x1800  (32×24 = 768 bytes)
+ *   Sprite patterns: 0x3800
+ *   Sprite attribs : 0x1B00
+ * ========================================================================== */
+#define VRAM_PATTERN_BASE   0x0000u
+#define VRAM_COLOR_BASE     0x2000u
+#define VRAM_NAME_BASE      0x1800u
+#define VRAM_SPRITE_PAT     0x3800u
+#define VRAM_SPRITE_ATTR    0x1B00u
+
+/* ==========================================================================
+ * GAME RAM - mirrors the MSX work-RAM variables used by the original code.
+ * Variable names are derived from the disassembly context.
+ * ========================================================================== */
+
+/* --- State flags (0xEAC9) ---
+ * Bit 0 : title screen / demo mode flag  (tested in sub_5D5D / sub_6F17)
+ * Bit 2 : fire / action button pressed   (tested in sub_6F21)
+ */
+static uint8_t g_state_flags;       /* 0xEAC9 */
+
+/* --- Player movement state (0xEACB / 0xEACC) ---
+ * eacb : current animation frame / direction index (0-8)
+ * eacc : facing direction flag (0=right, 0xFF=left)
+ */
+static uint8_t g_anim_frame;        /* 0xEACB */
+static uint8_t g_facing;            /* 0xEACC */
+
+/* --- Player world position (0xEACA) ---
+ * Used as a speed/position counter (initialised to 0x70 = 112)
+ */
+static uint8_t g_player_speed;      /* 0xEACA */
+
+/* --- Screen-transition / intro counter (0xEAD6) ---
+ * Counts 0x00..0x11 (17 steps) during wipe/scroll transitions.
+ * Value 0x11 = transition complete.
+ */
+static uint8_t g_transition;        /* 0xEAD6 */
+
+/* --- Game-over / death flag (0xEAE0) ---
+ * Non-zero when player has died or game should end.
+ */
+static uint8_t g_game_over;         /* 0xEAE0 */
+
+/* --- Room exit flag (0xEAE1) ---
+ * Non-zero when player has reached the room exit.
+ */
+static uint8_t g_room_exit;         /* 0xEAE1 */
+
+/* --- "Quentin mode" / special event flag (0xEAE3) ---
+ * Set by several subsystems to request a scene restart.
+ */
+static uint8_t g_restart_flag;      /* 0xEAE3 */
+
+/* --- Intro-sequence active flag (0xEAE4) ---
+ * Non-zero while the title / intro animation is running.
+ */
+static uint8_t g_intro_active;      /* 0xEAE4 */
+
+/* --- Current music/SFX data pointer (0xEAE5 / 0xEAE7) ---
+ * HL = pointer into the music table; A = remaining ticks for current note.
+ */
+static const uint8_t *g_music_ptr;  /* 0xEAE5 */
+static uint8_t g_music_ticks;       /* 0xEAE7 */
+
+/* --- Enemy-present flag (0xEAE8) ---
+ * Non-zero when enemies are on-screen and active.
+ */
+static uint8_t g_enemies_active;    /* 0xEAE8 */
+
+/* --- Score (BCD, 3 bytes little-endian) (0xEA00) --- */
+static uint8_t g_score[3];          /* 0xE33D */
+
+/* --- Hi-score (BCD, 3 bytes) (0xE340) --- */
+static uint8_t g_hiscore[3];        /* 0xE340 */
+
+/* --- Player map position (0xE334 = col, 0xE335 = row) --- */
+static uint8_t g_player_col;        /* 0xE334 */
+static uint8_t g_player_row;        /* 0xE335 */
+
+/* --- Level/room data (0xE000..0xE3FF) --- */
+static uint8_t g_map[0x400];        /* 0xE000 */
+
+/* --- Sprite attribute table mirror (32 sprites × 4 bytes) --- */
+static uint8_t g_sprites[32 * 4];  /* shadow of VRAM 0x1B00 */
+
+/* --- Key-frame queue for intro animation (0xEACD..0xEAD5 = 9 bytes) --- */
+static uint8_t g_keyframe_queue[9]; /* 0xEACD */
+
+/* --- VDP address registers (mirrors of MSX BIOS variables) --- */
+static uint16_t g_vram_name_base;   /* 0xF3C7 : name table base   = 0x1800 */
+static uint16_t g_vram_color_base;  /* 0xF3C9 : color table base  = 0x2000 */
+static uint16_t g_vram_pat_base;    /* 0xF3CB : pattern table     = 0x0000 */
+static uint16_t g_vram_spr_attr;    /* 0xF3CD : sprite attr table = 0x1B00 */
+static uint16_t g_vram_spr_pat;     /* 0xF3CF : sprite pattern    = 0x3800 */
+
+/* --- Pointer into ROM sprite/tile data --- */
+static const uint8_t *g_tile_data_ptr; /* 0xEAD7, init = 0x7CF2 in ROM    */
+
+/* ==========================================================================
+ * FORWARD DECLARATIONS
+ * ========================================================================== */
+static void init_system(void);
+static void title_screen(void);
+static void game_loop(void);
+static void reset_level_state(void);
+static void frame_update(void);
+
+static void render_map(void);
+static void update_enemies(void);
+static void update_player(void);
+static uint8_t collision_check(uint8_t col, uint8_t row);
+
+static void music_tick(void);
+static void sfx_play(uint8_t id);
+
+static void draw_sprite(uint8_t sprite_id, uint8_t x, uint8_t y, uint8_t tile, uint8_t color);
+static void put_tile(uint8_t col, uint8_t row, uint8_t tile_id, uint8_t color);
+static uint16_t vram_name_addr(uint8_t col, uint8_t row);
+static uint16_t vram_sprite_row(uint8_t col, uint8_t row);
+
+static void score_add(uint8_t tens, uint8_t units);
+static void hiscore_check(void);
+static void score_display(void);
+
+/* ==========================================================================
+ * INIT (sub_4CA2 + sub_4C88 + sub_4D3F)
+ *
+ * Original Z80 summary:
+ *   4010  LD SP, 0xF000        ; set stack
+ *   4013  CALL sub_4CA2        ; hardware init
+ *   sub_4CA2:
+ *     CALL sub_4C88            ; VDP register setup (not shown, sets modes)
+ *     LD H, 0x80
+ *     CALL BIOS_DCOMPR         ; detect MSX2 (compare H with MSXVER)
+ *     EI                       ; enable interrupts
+ *     CALL BIOS_KEYINT         ; init keyboard
+ *     LD A, 0x0F → (0xF3E9)   ; function key display off
+ *     LD A, 0x01 → (0xF3EA/EB); line length = 40
+ *     CALL 0x0062              ; BIOS init (undocumented slot)
+ *     ; Set up VRAM base addresses in BIOS variables:
+ *     HL=0x1800 → (0xF3C7)    ; name table
+ *     HL=0x2000 → (0xF3C9)    ; color table
+ *     HL=0x0000 → (0xF3CB)    ; pattern table
+ *     HL=0x1B00 → (0xF3CD)    ; sprite attr
+ *     HL=0x3800 → (0xF3CF)    ; sprite patterns
+ *     CALL BIOS_RDVRM          ; dummy VDP read (sync)
+ *     CALL BIOS_DISSCR         ; blank screen
+ *     CALL BIOS_CLRSPR         ; clear all sprites
+ *     ; Enable slot for ROM data at 0x4000-0x7FFF...
+ *     ; Copy sprite/tile ROM data to VRAM (0x7CF2 → VRAM)
+ *     ; Set VDP registers for graphics mode 2
+ *     ; Hook interrupt vector at 0xFD9F (custom ISR at 0x75D4)
+ *     EI / RET
+ * ========================================================================== */
+static void init_system(void)
+{
+    /* Set VRAM layout addresses (mirrors MSX BIOS variables) */
+    g_vram_name_base  = VRAM_NAME_BASE;    /* 0x1800 */
+    g_vram_color_base = VRAM_COLOR_BASE;   /* 0x2000 */
+    g_vram_pat_base   = VRAM_PATTERN_BASE; /* 0x0000 */
+    g_vram_spr_attr   = VRAM_SPRITE_ATTR;  /* 0x1B00 */
+    g_vram_spr_pat    = VRAM_SPRITE_PAT;   /* 0x3800 */
+
+    hal_vdp_disable_screen();
+    hal_vdp_clear_sprites();
+    hal_vdp_init_screen2();
+
+    /* Copy tile/sprite ROM data to VRAM.
+     * In the original, the ROM data at 0x7CF2 is block-copied into VRAM.
+     * Here we delegate to the HAL which should load the binary data. */
+    /* hal_load_tile_data(); */
+
+    /* Set up VDP color registers (from sub_4CA2 / INITXT calls in sub_4D27):
+     *   VDP R7 = 0x0F  (white on black, border)
+     *   VDP R1 bit 6 = 1 (enable screen)  -- done after init
+     */
+    hal_vdp_write_reg(7, 0x0F);
+
+    /* Initialise game state */
+    memset(g_score,   0, sizeof(g_score));
+    memset(g_hiscore, 0, sizeof(g_hiscore));
+    memset(g_map,   0, sizeof(g_map));
+    memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
+
+    g_state_flags    = 0;
+    g_anim_frame     = 0;
+    g_facing         = 0;
+    g_player_speed   = 0x70;
+    g_transition     = 0;
+    g_game_over      = 0;
+    g_room_exit      = 0;
+    g_restart_flag   = 0;
+    g_intro_active   = 0;
+    g_enemies_active = 0;
+    g_music_ptr      = NULL;
+    g_music_ticks    = 0;
+    g_player_col     = 0;
+    g_player_row     = 0;
+}
+
+/* ==========================================================================
+ * TITLE SCREEN (sub_4016 / sub_4A4A)
+ *
+ * Original Z80 summary (outer loop at 0x4016):
+ *   4016  CALL sub_6383   ; reset keyframe queue (fill 0xEACD..0xEAD5 with 0xFF)
+ *   4019  CALL sub_4D52   ; reset level state (player pos, room vars, etc.)
+ *   ---- inner loop at 0x401C ----
+ *   401C  CALL sub_4A4A   ; run title/intro sequence
+ *   401F  CALL sub_4D52   ; reset level state again
+ *   4022  JR C, sub_4016  ; if intro was aborted (C set), restart title
+ *   4024  CALL sub_4029   ; clear a few state bytes (0xEAF1/F2/F4/F5)
+ *   4027  JR sub_401C     ; loop forever (game starts inside sub_4A4A)
+ *
+ * sub_4A4A sets g_intro_active=1 then animates the title.
+ * When the player presses fire, g_intro_active is cleared and the game begins.
+ * The Carry flag on return from sub_4A4A signals a hard-reset condition.
+ * ========================================================================== */
+static void title_screen(void)
+{
+restart_title:
+    /* sub_6383: fill keyframe queue with 0xFF (sentinel = empty) */
+    memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
+
+    /* sub_4D52: reset level state */
+    reset_level_state();
+
+inner_loop:
+    {
+        bool aborted = false; /* Carry flag from sub_4A4A */
+
+        /* sub_4A4A: title/intro animation */
+        g_intro_active = 1;
+        /* --- simplified intro loop --- */
+        while (g_intro_active) {
+            music_tick();          /* sub_4B4C  */
+            render_map();          /* sub_4C0B  */
+            if (!g_intro_active) break;
+            /* check if player pressed fire to skip into game */
+            if (hal_key_pressed()) {
+                g_intro_active = 0;
+            }
+            hal_wait_vsync();
+        }
+
+        reset_level_state();
+
+        if (aborted) goto restart_title;
+
+        /* sub_4029: clear auxiliary state bytes */
+        g_player_speed   = 0;  /* 0xEAF1 */
+        g_facing         = 0;  /* 0xEAF2 */
+        g_anim_frame     = 0;  /* 0xEAF4/F5 */
+
+        goto inner_loop;
+    }
+}
+
+/* ==========================================================================
+ * RESET LEVEL STATE (sub_4D52)
+ *
+ * Original Z80 summary:
+ *   LD A,0x05 → (0xE324)   ; lives remaining = 5
+ *   LD A,0x70 → (0xE320)   ; player X pixel position = 0x70 (112)
+ *   LD A,0x06 → (0xE333)   ; room number = 6 (starting room)
+ *   LD A,0x01 → (0xE321)   ; player Y = 1 (top of map)
+ *   LD A,0x70 → (0xEACA)   ; speed counter = 0x70
+ *   LD A,0x00 → (0xE322)   ; sub-pixel X = 0
+ *   LD A,0x11 → (0xE323)   ; direction timer = 0x11
+ *   Zero-fill 0xE325..0xE32D (9 bytes) ; enemy slot data
+ *   Zero-fill 0xE331..0xE332          ; scroll offset
+ *   LD (0xEAE8),A = 0      ; enemies inactive
+ *   Fill 0xE000..0xE00C with 0x00     ; first 13 map bytes (walkable)
+ *   Fill 0xE00D..0xE2D2 with 0xFF     ; rest of map (solid walls)
+ * ========================================================================== */
+
+/* Game state variables for level (mapped from disassembly) */
+static uint8_t g_lives;          /* 0xE324 - lives remaining   */
+static uint8_t g_player_x;       /* 0xE320 - player X (pixels) */
+static uint8_t g_room_number;    /* 0xE333 - current room      */
+static uint8_t g_player_y;       /* 0xE321 - player Y (tiles)  */
+static uint8_t g_subpixel_x;     /* 0xE322 - sub-pixel offset  */
+static uint8_t g_dir_timer;      /* 0xE323 - direction timer   */
+static uint8_t g_scroll_x;       /* 0xE331 - scroll X          */
+static uint8_t g_scroll_y;       /* 0xE332 - scroll Y          */
+static uint8_t g_enemy_slots[9]; /* 0xE325..0xE32D             */
+
+static void reset_level_state(void)
+{
+    g_lives        = 5;
+    g_player_x     = 0x70;    /* 112 pixels */
+    g_room_number  = 6;
+    g_player_y     = 1;
+    g_player_speed = 0x70;
+    g_subpixel_x   = 0;
+    g_dir_timer    = 0x11;
+    g_scroll_x     = 0;
+    g_scroll_y     = 0;
+    g_enemies_active = 0;
+
+    memset(g_enemy_slots, 0, sizeof(g_enemy_slots));
+
+    /* Map: first 13 bytes walkable (0x00), rest walls (0xFF) */
+    memset(g_map,        0x00, 13);
+    memset(g_map + 13,   0xFF, sizeof(g_map) - 13);
+}
+
+/* ==========================================================================
+ * MAIN GAME LOOP (reconstructed from 0x4064..0x40B9)
+ *
+ * Original Z80 (inner frame loop starting at sub_4064):
+ *   4064  CALL sub_5D5D   ; check title-mode flag → sets Z if bit0=0
+ *   4067  JR NZ, 0x4070   ; if in title mode, skip anim-frame reset
+ *   4069  XOR A
+ *   406A  LD (0xEACB),A = 0  ; reset anim frame
+ *   406D  LD (0xEACC),A = 0  ; reset facing
+ *   4070  CALL sub_6383   ; reset keyframe queue
+ *   4073  LD A,1 → (0xEAE8)  ; enemies active
+ *   4078  CALL sub_5128   ; music tick + sprite DMA
+ *   407B  XOR A → (0xEAE8)   ; enemies inactive again (double-buffered)
+ *   407F  CALL 0x62D8     ; render background
+ *   4082  CALL sub_5B96   ; update scrolling
+ *   4085  LD A,(0xEAE3) / OR A / RET NZ   ; bail if restart_flag set
+ *   408A  CALL sub_442D   ; update doors/switches
+ *   408D  CALL sub_434A   ; update keys/collectibles
+ *   4090  CALL sub_40BB   ; update player movement (see below)
+ *   4093  CALL sub_6F5C   ; update enemy AI
+ *   4096  CALL sub_4406   ; update traps/spikes
+ *   4099  CALL sub_438D   ; check key collection
+ *   409C  CALL sub_4499   ; check door collision
+ *   409F  CALL sub_5A2D   ; update HUD
+ *   40A2  LD A,(0xEAE0) / OR A / RET NZ   ; bail if game_over
+ *   40A7  LD A,(0xEAE1) / CALL sub_5053 / OR A / RET NZ  ; bail if room_exit
+ *   40AF  LD A,(0xEAC9) / INC A → (0xEAC9) ; increment state_flags (frame ctr)
+ *   40B6  CALL 0x623C     ; scroll/camera update
+ *   40B9  JR sub_4064     ; next frame
+ * ========================================================================== */
+static void game_loop(void)
+{
+    while (true) {
+        /* sub_5D5D: check if we're in "title/demo" mode (bit 0 of g_state_flags) */
+        bool title_mode = (g_state_flags & 0x01) != 0;
+
+        if (!title_mode) {
+            g_anim_frame = 0;
+            g_facing     = 0;
+        }
+
+        /* sub_6383: reset keyframe queue sentinel values */
+        memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
+
+        /* sub_5128: music tick + sprite update (enemies_active flag used as
+         * double-buffer semaphore in original — simplified here) */
+        g_enemies_active = 1;
+        music_tick();
+        g_enemies_active = 0;
+
+        /* Render background map (sub_62D8) */
+        render_map();
+
+        /* Update scroll (sub_5B96) */
+        /* scroll_update(); */
+
+        /* Check restart request */
+        if (g_restart_flag) return;
+
+        /* Update interactive objects */
+        /* update_doors();       sub_442D */
+        /* update_collectibles(); sub_434A */
+        update_player();   /* sub_40BB */
+        update_enemies();  /* sub_6F5C */
+        /* update_traps();       sub_4406 */
+        /* check_key_pickup();   sub_438D */
+        /* check_door_exit();    sub_4499 */
+        /* update_hud();         sub_5A2D */
+
+        if (g_game_over) return;
+
+        /* Check room exit (sub_5053) */
+        if (g_room_exit) {
+            /* load_next_room(); */
+            if (g_room_exit) return;
+        }
+
+        /* Increment frame counter in g_state_flags */
+        g_state_flags++;
+
+        /* Camera/scroll update (sub_623C) */
+        /* camera_update(); */
+
+        hal_wait_vsync();
+    }
+}
+
+/* ==========================================================================
+ * PLAYER MOVEMENT (sub_40BB)
+ *
+ * Original Z80 summary:
+ *   HL = 0x0000  (result movement vector: H=dy, L=dx)
+ *   DE = 0x00FF  (D=vertical delta, E=horizontal delta; init to sentinel)
+ *   BC = (0xE334)(0xE335+2)  ; player col, row+2 (feet position)
+ *   CALL sub_4515  ; read joystick → A = direction bits
+ *   OR A / LD A,(0xEAD6)     ; check transition counter
+ *   [complex branching to compute dx/dy from joystick direction]
+ *   CALL sub_41F6  ; apply movement (clamp to map, update position)
+ *   [bit-test E for horizontal/vertical flags → set bits in H for animation]
+ *   CALL sub_4515  ; re-read joystick
+ *   [more animation state updates]
+ *
+ * Joystick direction encoding (MSX standard, from BIOS GTSTCK):
+ *   0 = none, 1 = up, 2 = up-right, 3 = right, 4 = down-right,
+ *   5 = down, 6 = down-left, 7 = left, 8 = up-left
+ * ========================================================================== */
+
+/* Direction → (dx, dy) table derived from the branching logic */
+static const int8_t DIR_DX[9] = { 0,  0,  1,  1,  1,  0, -1, -1, -1 };
+static const int8_t DIR_DY[9] = { 0, -1, -1,  0,  1,  1,  1,  0, -1 };
+
+static void update_player(void)
+{
+    /* Read joystick (sub_4515 wraps BIOS GTSTCK port 1) */
+    uint8_t dir = hal_joystick_read(1); /* 0-8 */
+    if (dir > 8) dir = 0;
+
+    int8_t dx = DIR_DX[dir];
+    int8_t dy = DIR_DY[dir];
+
+    /* g_transition counts a wipe animation 0x00→0x11.
+     * While wipe is in progress the player cannot move. */
+    if (g_transition > 0 && g_transition < 0x11) {
+        /* Advance transition counter */
+        if (g_transition < 0x11) g_transition++;
+        /* sub_41F6: apply zero movement (player frozen) */
+        dx = dy = 0;
+    }
+
+    /* sub_41F6: apply movement with collision (simplified) */
+    uint8_t new_col = (uint8_t)((int)g_player_col + dx);
+    uint8_t new_row = (uint8_t)((int)g_player_row + dy);
+
+    /* Map bounds: 20 cols (0x14), 30 rows (0x1E) — from sub_6A7C CP 0x14 / CP 0x1E */
+    if (new_col >= 0x14) new_col = g_player_col;
+    if (new_row >= 0x1E) new_row = g_player_row;
+
+    /* Tile collision check */
+    if (collision_check(new_col, new_row) == 0) {
+        g_player_col = new_col;
+        g_player_row = new_row;
+    }
+
+    /* Update animation frame (from bit manipulation in sub_40BB / sub_412B) */
+    if (dx != 0 || dy != 0) {
+        g_anim_frame = (g_anim_frame + 1) & 0x07;
+        g_facing = (dx < 0) ? 0xFF : 0x00;
+    }
+
+    /* Update player pixel X (sub-pixel counter at 0xEAD6, range 0..0x11 = 17 steps) */
+    if (dx != 0) {
+        if (dx > 0) {
+            if (g_transition < 0x11) g_transition++;
+            else g_transition = 0x11;
+        } else {
+            if (g_transition > 0x00) g_transition--;
+            else g_transition = 0x00;
+        }
+    }
+
+    /* Update sprite position in shadow table */
+    uint8_t px = g_player_x;
+    uint8_t py = (uint8_t)(g_player_row * 8);
+    draw_sprite(0, px, py, g_anim_frame, (g_facing == 0) ? 0x0F : 0x0E);
+}
+
+/* ==========================================================================
+ * COLLISION CHECK
+ *
+ * The map stores tile IDs in g_map[row*20 + col].
+ * 0x00 = walkable space, 0xFF = solid wall.
+ * Other values encode doors, spikes, keys, etc.
+ *
+ * Returns: 0 = passable, non-zero = blocked
+ * ========================================================================== */
+static uint8_t collision_check(uint8_t col, uint8_t row)
+{
+    if (col >= 20 || row >= 30) return 0xFF; /* out of bounds = solid */
+    return g_map[(uint16_t)row * 20u + col];
+}
+
+/* ==========================================================================
+ * ENEMY UPDATE (sub_6F5C — not yet fully decoded, stub)
+ * ========================================================================== */
+static void update_enemies(void)
+{
+    /* TODO: decode sub_6F5C, sub_6EE1, sub_6A7C fully.
+     *
+     * sub_6A7C (called 43×) is the sprite draw helper.
+     * It takes HL = (col, row) and draws the right sprite frame.
+     * sub_6EE1 (called 22×) writes a character+colour to VRAM name table.
+     * sub_6F5C iterates enemy slots and calls movement + draw routines.
+     */
+}
+
+/* ==========================================================================
+ * RENDER MAP (sub_62D8 / sub_6383 area — stub)
+ *
+ * The render loop at sub_63BB iterates 10×10 tiles and calls sub_640F
+ * which writes tile ID and colour to the VDP name table.
+ * sub_6EE1 is the low-level "write one tile to VRAM" function.
+ * ========================================================================== */
+static void render_map(void)
+{
+    for (uint8_t row = 0; row < 10; row++) {
+        for (uint8_t col = 0; col < 10; col++) {
+            uint8_t tile = g_map[(uint16_t)row * 20u + col];
+            uint8_t color = (tile == 0x00) ? 0x04 : 0x07;
+            put_tile(col, row, tile, color);
+        }
+    }
+}
+
+/* ==========================================================================
+ * MUSIC TICK (sub_4B4C / sub_5128 area — stub)
+ *
+ * sub_5128 is the main "wait + music" routine called 30×.
+ * It loops g_player_speed (0xEACA = 0x70 = 112) times calling sub_50E8
+ * (the PSG update) then handles the music data stream.
+ *
+ * Music data format (from sub_5128 / sub_516A area):
+ *   Each byte: bits[3:0] = note duration ticks
+ *              bit[4]    = 1 → set facing to 0xFF (left), else 0
+ *   The pointer g_music_ptr advances through a table; 0xFF = loop/end.
+ * ========================================================================== */
+static void music_tick(void)
+{
+    if (g_music_ptr == NULL) return;
+
+    /* Decrement tick counter for current note */
+    if (g_music_ticks > 0) {
+        g_music_ticks--;
+        return;
+    }
+
+    /* Advance to next note */
+    g_music_ptr += 2; /* each entry is 2 bytes: [note_data, channel_data] */
+    uint8_t note_byte = g_music_ptr[0];
+
+    if (note_byte == 0xFF) {
+        /* End of stream — silence */
+        hal_psg_write(8, 0); /* volume channel A = 0 */
+        hal_psg_write(9, 0); /* volume channel B = 0 */
+        return;
+    }
+
+    g_music_ticks = note_byte & 0x0F;
+    g_anim_frame  = (note_byte & 0x10) ? 0xFF : 0x00; /* bit4 → facing */
+
+    /* Write tone to PSG (simplified) */
+    hal_psg_write(0, g_music_ptr[1]);
+}
+
+/* ==========================================================================
+ * SCORE (sub_5D87 / sub_5DC0 area)
+ *
+ * Score is stored as 3-byte packed BCD (6 digits), little-endian.
+ * sub_5D87 adds DE (tens/units BCD pair) to the score using DAA.
+ * sub_5DC0 then checks against hi-score and updates the display.
+ * ========================================================================== */
+static void score_add(uint8_t tens, uint8_t units)
+{
+    /* BCD addition: units digit */
+    uint8_t carry = 0;
+    uint8_t sum = (g_score[0] & 0x0F) + (units & 0x0F);
+    if (sum >= 10) { sum -= 10; carry = 1; }
+    sum |= ((g_score[0] >> 4) + (units >> 4) + carry) * 16;
+    /* simplification: real code uses DAA instruction */
+    g_score[0] = sum;
+    /* propagate carry into g_score[1], g_score[2] similarly */
+
+    hiscore_check();
+}
+
+static void hiscore_check(void)
+{
+    /* Compare g_score vs g_hiscore (3-byte BCD, big-endian compare) */
+    for (int i = 2; i >= 0; i--) {
+        if (g_score[i] > g_hiscore[i]) {
+            memcpy(g_hiscore, g_score, 3);
+            return;
+        }
+        if (g_score[i] < g_hiscore[i]) return;
+    }
+}
+
+static void score_display(void)
+{
+    /* Write BCD score digits to VRAM name table.
+     * sub_5DC0 calls sub_5DD3 which iterates 3 bytes and calls sub_5DDE
+     * to render each digit pair at a fixed screen position. */
+    /* Score at name-table column 0x22, hi-score at 0x2A */
+    for (int i = 0; i < 3; i++) {
+        uint8_t byte   = g_score[i];
+        uint8_t hi_dig = byte >> 4;
+        uint8_t lo_dig = byte & 0x0F;
+        put_tile((uint8_t)(0x22 + i * 2),     23, hi_dig + '0', 0x0F);
+        put_tile((uint8_t)(0x22 + i * 2 + 1), 23, lo_dig + '0', 0x0F);
+    }
+}
+
+/* ==========================================================================
+ * VDP HELPERS
+ * ========================================================================== */
+
+/* Name-table VRAM address for a given (col, row) tile position */
+static uint16_t vram_name_addr(uint8_t col, uint8_t row)
+{
+    return (uint16_t)(g_vram_name_base + (uint16_t)row * 32u + col);
+}
+
+/* Write a tile (character + colour) to the VDP name table.
+ * sub_6EE1 / sub_6EAE in the original. */
+static void put_tile(uint8_t col, uint8_t row, uint8_t tile_id, uint8_t color)
+{
+    uint16_t addr = vram_name_addr(col, row);
+    hal_vdp_write_vram(addr, tile_id);
+    /* Colour table: same offset but in colour base */
+    hal_vdp_write_vram((uint16_t)(g_vram_color_base + (uint16_t)tile_id * 8u), color);
+}
+
+/* Write sprite attributes to shadow and queue DMA.
+ * sub_6A7C / sub_6ADF in the original. */
+static void draw_sprite(uint8_t sprite_id, uint8_t x, uint8_t y,
+                        uint8_t tile, uint8_t color)
+{
+    uint8_t *s = &g_sprites[sprite_id * 4];
+    s[0] = y;    /* Y pixel position (VDP: Y is stored first) */
+    s[1] = x;    /* X pixel position */
+    s[2] = tile; /* pattern number  */
+    s[3] = color;/* colour + early-clock */
+
+    /* Write to VRAM sprite attribute table */
+    hal_vdp_copy_to_vram((uint16_t)(g_vram_spr_attr + sprite_id * 4u), s, 4);
+}
+
+/* ==========================================================================
+ * ENTRY POINT
+ * ========================================================================== */
+int main(void)
+{
+    init_system();     /* sub_4CA2 : hardware + VRAM init     */
+    title_screen();    /* sub_4016 loop : title + intro screen */
+    /* game_loop() is entered from within title_screen once fire is pressed */
+    return 0;
+}
