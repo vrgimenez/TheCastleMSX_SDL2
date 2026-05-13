@@ -14,6 +14,7 @@
  */
 
 #include "hal.h"
+#include "game.h"
 
 #include <SDL2/SDL.h>
 #include <stdint.h>
@@ -707,6 +708,7 @@ bool hal_key_pressed(void)
  */
 void hal_wait_vsync(void)
 {
+    music_isr_tick();   /* VBlank ISR: advance music player */
     hal_vdp_present();
 
     uint64_t now     = SDL_GetTicks64();

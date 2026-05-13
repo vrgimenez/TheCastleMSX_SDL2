@@ -14,7 +14,12 @@ option(ENABLE_ASAN "Activar AddressSanitizer (solo desarrollo)" OFF)
 # Fuentes del juego (lógica pura, sin dependencias de plataforma)
 # =============================================================================
 set(GAME_SOURCES
+    main.c          # Punto de entrada: carga ROM, inicializa HAL y subsistemas
     the_castle.c    # Loop principal, jugador, movimiento, puntuación
+    tiles.c         # Carga de tiles ROM → VRAM (sub_4D52 / sub_64AB / sub_6CD9)
+    enemies.c       # IA de enemigos: roller, bat, sprite draw (sub_6F5C..sub_719D)
+    particles.c     # Chispas, partículas, trampa murciélago (sub_61F5 / sub_7279)
+    doors.c         # Puertas, switches, bloques, pinchos, coleccionables (sub_442D)
 )
 
 # =============================================================================

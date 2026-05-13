@@ -148,3 +148,40 @@ Vamos a leer todo el árbol de sub_442D:Tengo todo lo necesario. Ahora escribo l
 
 El port ahora tiene traducidos todos los sistemas principales. ¿Seguimos con el scroll/cámara (`sub_623C`), el sistema de música (`sub_7769`), o prefieres hacer un `main.c` que una todo y compile con SDL2?
 
+> _Armame el main_
+
+Vamos a revisar todo lo que tenemos antes de armar el main:Tengo el cuadro completo. Hay tres cosas que resolver antes del main: los `static` que bloquean el `extern`, las dos funciones stub en `doors.c`, y unificar el `main()` que ya existe en `the_castle.c`. Lo armo todo junto:Ahora hay que refactorizar `the_castle.c` para eliminar su `main()` y hacer públicas las variables:Cero errores, cero warnings. Copiamos todo:Compila limpio. El proyecto completo son 11 archivos listos para usar.
+
+**Para correrlo en Linux:**
+```bash
+sudo apt install libsdl2-dev cmake
+cmake -B build && cmake --build build
+cp the_castle.rom build/
+./build/the_castle
+```
+
+**Qué resolvió este paso** — había tres problemas de arquitectura que surgieron al unir todo:
+
+El primero es que las variables compartidas entre módulos (`g_state_flags`, `g_player_col`, `g_map`, etc.) estaban declaradas `static` en `the_castle.c`, lo que las hacía invisibles para `enemies.c`, `particles.c` y `doors.c`. La solución fue crear `game.h` que las declara como `extern`, y moverlas a `main.c` donde se definen una sola vez.
+
+El segundo es que `the_castle.c` tenía su propio `main()`. Se eliminó y se separó en `main.c`, que ahora es el único punto de entrada y donde viven los stubs de `update_roller_by_pos` / `update_bat_by_slot` que `doors.c` necesita.
+
+El tercero es un bug en `hal_sdl2.c`: usaba `AUDIO_S16SYS` sin el prefijo `SDL_`, que es el nombre correcto desde SDL2 en adelante.
+
+**Estado actual del port:**
+
+| Sistema | Estado |
+|---------|--------|
+| HAL SDL2 (VDP, PSG, input, vsync) | ✅ completo |
+| Carga de tiles ROM→VRAM | ✅ completo |
+| Loop principal, reset de nivel | ✅ completo |
+| Movimiento del jugador + colisión | ✅ completo |
+| Enemigos (roller, bat) + partículas | ✅ completo |
+| Puertas, switches, bloques, pinchos | ✅ completo |
+| Coleccionables y llaves | ✅ completo |
+| Build system multiplataforma | ✅ completo |
+| Scroll/cámara (`sub_623C`) | 🚧 stub |
+| Música PSG completa (`sub_7769`) | 🚧 stub |
+| Pantalla de título (`sub_4A4A`) | 🚧 stub |
+| Carga de salas (`sub_5053`) | 🚧 stub |
+
