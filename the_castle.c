@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <SDL2/SDL.h>
 
 /* ==========================================================================
  * PLATFORM HAL - replace these with real implementations for your target
@@ -705,7 +706,7 @@ static void draw_sprite(uint8_t sprite_id, uint8_t x, uint8_t y,
 /* ==========================================================================
  * ENTRY POINT
  * ========================================================================== */
-int main(void)
+int main(int argc, char *argv[])
 {
     init_system();     /* sub_4CA2 : hardware + VRAM init     */
     title_screen();    /* sub_4016 loop : title + intro screen */
