@@ -117,3 +117,34 @@ El murciélago entra en estado "trampa" (`type=0x36` en `anim_id`) cuando se que
 
 ¿Seguimos con la carga de tiles desde la ROM, o prefieres decodificar las puertas y switches (`sub_442D`) para tener el juego más completo?
 
+> _Sigue con los tiles_
+
+Vamos a leer las rutinas de carga de tiles:Ahora tengo todo lo necesario. El formato es claro: cada tileset es un bloque de punteros de 2 bytes a datos de tile de 16 bytes (8 pares patrón/color). Escribo el loader:
+
+> _ahora resta decodificar las puertas y switches_
+
+Vamos a leer todo el árbol de sub_442D:Tengo todo lo necesario. Ahora escribo la traducción:Cero errores. Lo que quedó claro de este análisis:
+
+**Arquitectura de objetos interactivos** — el juego tiene **cuatro tablas de RAM separadas**, todas con stride fijo, que se iteran cada frame con el mismo patrón `HL=base, DE=stride, B=count, DJNZ`:
+
+| Tabla | Base RAM | Slots | Stride | Contenido |
+|-------|----------|-------|--------|-----------|
+| `g_objects` | `0xE43E` | 16 | 5 | Puertas, switches, bloques, pinchos |
+| `g_exit_doors` | `0xE3D6` | 16 | 4 | Puertas de salida de habitación |
+| `g_collectibles` | `0xE386` | 16 | 5 | Llaves, power-ups, rollers |
+| `g_bat_slots` | `0xE416` | 8 | 5 | Murciélagos y llaves especiales |
+
+**Hallazgos importantes:**
+
+- **Dos pasadas por frame**: todos los dispatchers hacen exactamente dos pasadas sobre sus tablas. La primera actualiza estado, la segunda dibuja. Esto garantiza que no haya flickering por escribir en VRAM en medio del update.
+
+- **Bloques empujables** (tiles `0x1C`/`0x1D`) son físicamente simulados: tienen una fase de caída por gravedad (bit 3 del state = 0) y una fase de empuje horizontal (bit 3 = 1). El jugador se mueve con el bloque si está encima — `g_player_col` se modifica directamente.
+
+- **Switch global** (bit 5 de `g_state_flags`): cuando está activo, el switch no dibuja una animación sino que **reescribe el mapa de colisión** en `g_tilemap` con `0x10` (suelo). Hay una segunda capa del mapa en el offset `+0x258` que se limpia al mismo tiempo.
+
+- **Animaciones de puerta** en ROM (`0x77F2`, `0x7802`): son tablas de `B×4` bytes donde cada fila de 4 bytes contiene los 4 tile IDs que forman una fila horizontal de la puerta/switch. Los frames se indexan multiplicando el frame counter por 4.
+
+- **Pinchos** (`0x1F`) se actualizan en la misma tabla que puertas y bloques, pero tienen su propia lógica de rebote vertical con dos sub-pasadas — la primera mueve, la segunda dibuja los dos frames de animación (`D=0x00` bajado, `D=0x02` subido).
+
+El port ahora tiene traducidos todos los sistemas principales. ¿Seguimos con el scroll/cámara (`sub_623C`), el sistema de música (`sub_7769`), o prefieres hacer un `main.c` que una todo y compile con SDL2?
+
