@@ -80,7 +80,7 @@ cmake -B build && cmake --build build
 
 El próximo paso lógico sería decodificar `sub_6F5C` (los enemigos) o `sub_4D0F` (la carga de tiles desde ROM al VRAM), que es lo que haría aparecer algo en pantalla. ¿Por cuál seguimos?
 
-> decodificame `sub_6F5C` (los enemigos)
+> _decodificame `sub_6F5C` (los enemigos)_
 
 Vamos a leer bien esa subrutina y todo lo que llama:Tengo todo lo necesario. Ahora puedo decodificar correctamente:Compila sin errores. Acá está lo que decodifiqué y lo que encontré:
 
@@ -96,3 +96,24 @@ No es solo "mover enemigos" — es el **dispatcher del sprite del jugador** en l
 - **El jugador empuja enemigos**: cuando un bloque/roller tiene el bit 4 del move_flags activo, modifica `g_player_col` directamente (lo arrastra).
 
 **Pendiente en `enemies.c`**: `sub_61F5` (efecto de partícula al pisar roller) y `sub_7279` (trampa especial del murciélago) — ¿seguimos con esos o pasamos a cargar los tiles desde la ROM?
+
+> _sigue con esos por favor_
+
+Vamos a leer esas dos subrutinas completas:Tengo todo. Los datos en `0x7780+` son claramente datos de tiles (no código). Ahora escribo la traducción:Suficiente. Ahora tengo el cuadro completo. Escribo la traducción:Cero errores. Copiamos y entregamos:Compila limpio. Lo que encontré en estas dos rutinas:
+
+**`sub_61F5` — Efecto de chispa del roller:**
+El roller solo genera chispa si tiene movimiento horizontal activo (`bit 0` de `move_flags`). En modo título hay una comprobación adicional: el tile adyacente izquierdo debe tener el `bit 4` activo (indica suelo real, no espacio decorativo). La chispa se spawnea en el primer slot libre de una tabla de 16 partículas con stride=5 en `0xE43E`. La dirección (`0x04`=derecha / `0x0C`=izquierda) sigue la dirección del roller.
+
+**`sub_735F` — Spawn de partícula individual:**
+Las partículas son sprites de 4 tiles en forma de zigzag vertical (2 tiles arriba + 2 tiles 3 filas más abajo). `sub_474E` sondea los tiles adyacentes para decidir si la partícula puede seguir moviéndose o debe pararse. En modo título solo dibuja sin mover, y cuando `V_ACTIVE` se apaga borra el sprite y libera el slot.
+
+**`sub_7279` — Trampa del murciélago:**
+El murciélago entra en estado "trampa" (`type=0x36` en `anim_id`) cuando se queda sin espacio vertical. Anima un ciclo de 4 fases controlado por `g_state_flags & 0x3F` (los 6 bits bajos del contador de frames = ciclo de 64 frames):
+- Fases 1-2: sprite estático en posición `row+1`
+- Fase 3: sprite de 2 tiles alternando entre `D=4` y `D=8` en función del bit 0 (parpadeo rápido)
+- Fase 4: borra el sprite y avanza `col+1` para el siguiente ciclo
+
+**Descubrimiento importante:** hay un segundo mapa en `0xE496` (stride=30) distinto del que estábamos usando (`0xE000`, stride=20). El primero es el **mapa de colisión** (bits 4-5 codifican tipo de tile), el segundo probablemente es el **mapa visual**. Son dos capas separadas.
+
+¿Seguimos con la carga de tiles desde la ROM, o prefieres decodificar las puertas y switches (`sub_442D`) para tener el juego más completo?
+
