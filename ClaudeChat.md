@@ -44,3 +44,38 @@ Vamos a analizar el loop principal y las subrutinas clave para empezar la traduc
 - La HAL completa (hay que implementarla para SDL, libretro, etc.)
 
 ¿Continuamos con los enemigos (`sub_6F5C` / `sub_6A7C`) o prefieres primero implementar la HAL para SDL2 y tener algo que compile y corra en PC?
+
+> _primero quiero la hal para sdl2 (o es mejor sdl3)_
+
+Buena pregunta. SDL3 es el futuro pero SDL2 tiene mucho más soporte ahora mismo.Q: ¿En qué plataforma vas a desarrollar?
+A: Linux
+
+Para Linux, **SDL2** es lo más práctico hoy — está en todos los repos (`apt install libsdl2-dev`), tiene drivers de audio maduros, y el ecosistema de herramientas (debuggers, profilers) está todo probado con SDL2. SDL3 todavía no está en los repos de muchas distros.
+
+Vamos con SDL2 entonces:Tengo lo que necesito. La HAL es sustancial — vamos a escribirla bien:
+
+> Q: ¿En qué plataforma vas a desarrollar? \
+> _A: Multiplataforma_
+
+Bien, multiplataforma. SDL2 sigue siendo la mejor elección — corre en Linux, Windows, macOS, y hasta en consolas (Switch, PS4) con ports oficiales. La HAL que estamos escribiendo ya es multiplataforma por diseño.
+
+Lo que sí hay que hacer bien es el **sistema de build**. Vamos a agregar un `CMakeLists.txt` que detecta la plataforma automáticamente, y el header `hal.h` que faltaba:Ahí están los cuatro archivos. Lo que entregamos:
+
+**`hal.h`** — la interface pública. `the_castle.c` solo ve este header, nunca SDL directamente. Eso significa que en el futuro podés escribir `hal_wasm.c` para WebAssembly, `hal_switch.c` para Switch, o `hal_null.c` para tests unitarios sin tocar una línea del juego.
+
+**`hal_sdl2.c`** — la implementación completa en ~600 líneas:
+- **VDP**: VRAM de 16KB, renderizado por software del TMS9918A en Screen 2 con la paleta de colores exacta, sprites con límite de 4 por scanline y soporte de early clock bit y magnificación
+- **PSG**: síntesis por software del AY-3-8910 con onda cuadrada por canal, LFSR de 17 bits para el canal de ruido, y tabla de volúmenes logarítmica
+- **Input**: teclado mapeado a GTSTCK/GTTRIG del MSX (cursores+WASD, Z/Space/Ctrl para fire)
+- **Vsync**: timing de 60Hz o 50Hz seleccionable con `-DPAL_TIMING=ON`
+
+**`CMakeLists.txt`** — detecta SDL2 por tres métodos distintos (CMake nativo, pkg-config, variables legacy) y da mensajes de error claros si no lo encuentra.
+
+Para arrancar en Linux:
+```bash
+sudo apt install libsdl2-dev cmake
+cmake -B build && cmake --build build
+./build/the_castle
+```
+
+El próximo paso lógico sería decodificar `sub_6F5C` (los enemigos) o `sub_4D0F` (la carga de tiles desde ROM al VRAM), que es lo que haría aparecer algo en pantalla. ¿Por cuál seguimos?
