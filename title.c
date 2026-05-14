@@ -39,10 +39,10 @@
  *   0x5738  — Coordenadas del núcleo del logo (entrada final)
  *             7 entradas de (col=0x09, row=0x0C..0x06)
  *   0x567F  — String "[ 1985  ISAO YOSHIDA" (créditos)
- *   0x5694  — String "[ 1986 KEISUKE IWAKURA"
- *   0x56AB  — String "PRESENTED"
- *   0x56B5  — String "BY"
- *   0x56B8  — String "ASCII CORPORATION"
+ *   0x5694  — String siguiente de créditos
+ *   0x56AB  — String de demo
+ *   0x56B5  — String adicional
+ *   0x56B8  — String final de créditos
  *
  * RAM USADA
  * ---------
@@ -51,7 +51,6 @@
  *   0xEACA  g_player_speed  — velocidad (2 durante logo, 0x20 durante créditos)
  */
 
-#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -130,7 +129,7 @@ static void vdp_clear_row(uint8_t row)
 static uint8_t char_to_tile(uint8_t chr, uint8_t tile_base)
 {
     if (chr == 0x20u) return 0x00u;
-    if (chr >= 0x30u && chr < 0x3Au) return (uint8_t)(chr - 0x30u + 0x5Du);     //R dígitos del 0 al 9
+    if (chr >= 0x30u && chr < 0x3Au) return (uint8_t)(chr - 0x30u + 0x5Du);
     return (uint8_t)(chr - 0x41u + tile_base);
 }
 
@@ -411,7 +410,6 @@ static void draw_credit_row(uint8_t row, uint16_t str_addr, bool draw)
         if (chr == STR_END) break;
 
         uint8_t tile = char_to_tile(chr, 0x73u);
-        if(chr == '1') printf("0x%02x ",tile);
 
         if (col < 32u) {
             hal_vdp_write_vram((uint16_t)(addr + col), tile);
