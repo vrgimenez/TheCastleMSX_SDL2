@@ -147,3 +147,6 @@ extern uint8_t g_room_x;
 extern uint8_t g_room_y;
 
 extern uint8_t g_keyframe_queue[9];
+
+/* --- title.c --- */
+void title_screen(void);

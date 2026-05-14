@@ -185,3 +185,44 @@ El tercero es un bug en `hal_sdl2.c`: usaba `AUDIO_S16SYS` sin el prefijo `SDL_`
 | Pantalla de título (`sub_4A4A`) | 🚧 stub |
 | Carga de salas (`sub_5053`) | 🚧 stub |
 
+> _Qué te resulta mas práctico hacer ahora_
+
+Mirando lo que falta, hay una dependencia clara entre los sistemas:
+
+```
+Carga de salas (sub_5053)
+    ↓ necesita
+Scroll/cámara (sub_623C)
+    ↓ necesita
+Pantalla de título (sub_4A4A)
+    ↓ necesita
+Música (sub_7769)
+```
+
+Lo más práctico ahora sería **carga de salas** — es el sistema que une todo. Sin él, el juego carga tiles y renderiza pero nunca pone nada en pantalla porque el mapa está vacío. Con él funcionando verías algo real corriendo.
+
+La música puede ir en paralelo porque es independiente y no bloquea nada visual.
+
+Mi sugerencia concreta:
+
+1. **`sub_5053` (carga de sala)** — lee el descriptor de sala desde la ROM, llena `g_map[]` y `g_tilemap[]`, coloca los objetos en sus tablas. Sin esto no hay nada que ver.
+2. **`sub_623C` (scroll/cámara)** — va de la mano con la sala, es relativamente corto.
+3. **`sub_4A4A` (título)** — en paralelo o después, porque la sala ya funcionaría.
+4. **`sub_7769` (música)** — último, es el sistema más complejo y autónomo.
+
+Arrancamos con `sub_5053`
+
+Vamos a leer todo el árbol de sub_5053:Tengo todo lo que necesito. El formato es claro:Cero errores. Copiamos todo:Compila limpio con todos los módulos linkeados. Lo que encontré en este análisis:
+
+**El sistema de salas es más complejo de lo que parecía.** Hay cuatro capas:
+
+La primera es el **sistema de coordenadas BCD**. Las salas están en una rejilla donde `g_room_x` (`0xE320`) usa BCD para codificar fila y columna en un solo byte — la decena es la fila y la unidad es la columna. Navegar "arriba" hace `SUB 0x10 / DAA`, no aritmética binaria normal. Esto explica por qué el juego puede tener hasta 99 salas en una rejilla de 9×9 sin necesitar un array de descriptores.
+
+La segunda es el **intérprete de scripts**. Cada sala tiene un bytecode propio en ROM (no tiles directos). El opcode `0x3D` mueve el cursor, los bytes `0x5D-0xBF` son caracteres con codificación desplazada (`tile = byte - 0x40`), y hay rangos distintos para los gráficos especiales del juego. El `0x40` final dispara `g_restart_flag` y termina el script.
+
+La tercera es que hay **tres punteros de script simultáneos** por sala: `g_script_ptr` (`0xEAFE`) para el contenido principal, `g_script_bg_ptr` (`0xEB05`) para el fondo animado, y `g_script_obj_ptr` (`0xEB08`) para los objetos interactivos. Los tres avanzan en paralelo cada frame.
+
+La cuarta es la **tabla de salas** en `0x5748` con entradas de 5 bytes que mapean `(room_x, col, row)` a un puntero de loader. Solo hay dos loaders: `0x53D4` (sala normal) y `0x5431` (sala con flag especial en bit 3 de `g_room_y`).
+
+Para compilar agregá `room.c` a tu `CMakeLists.txt` en la lista de `GAME_SOURCES`. El próximo paso natural sería el scroll/cámara (`sub_623C`) o la música — ¿cuál preferís?
+

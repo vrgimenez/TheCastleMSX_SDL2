@@ -109,7 +109,7 @@ extern uint8_t g_room_exit;     /* 0xEAE1 */
 static uint8_t g_enemy_flash;   /* 0xEAF8 — parpadeo al inicio de nivel  */
 
 /* Contadores de animación por tercio de pantalla (0xEA66..0xEA68) */
-static uint8_t g_anim_ctr[ENEMY_THIRDS]; /* 0xEA66, 0xEA67, 0xEA68 */
+uint8_t g_anim_ctr[ENEMY_THIRDS]; /* 0xEA66, 0xEA67, 0xEA68 */
 
 /* Slots de enemigos: 3 tercios × 3 slots */
 static EnemySlot g_enemies[ENEMY_THIRDS][ENEMY_SLOTS_PER_THIRD];

@@ -20,6 +20,7 @@ set(GAME_SOURCES
     enemies.c       # IA de enemigos: roller, bat, sprite draw (sub_6F5C..sub_719D)
     particles.c     # Chispas, partículas, trampa murciélago (sub_61F5 / sub_7279)
     doors.c         # Puertas, switches, bloques, pinchos, coleccionables (sub_442D)
+    room.c          # Carga de salas, scripts de sala, transiciones (sub_5053)
 )
 
 # =============================================================================
