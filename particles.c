@@ -75,11 +75,11 @@ typedef struct {
 static Particle g_particles[PARTICLE_SLOTS];
 
 /* Timers de animación de chispa (0xE343, 0xE344) */
-static uint8_t g_spark_timer_a;  /* 0xE343 */
-static uint8_t g_spark_timer_b;  /* 0xE344 */
+uint8_t g_spark_timer_a;  /* 0xE343 */
+uint8_t g_spark_timer_b;  /* 0xE344 */
 
 /* Timer de fade del sprite de muerte (0xEAF9) */
-static uint8_t g_death_fade_timer;  /* 0xEAF9 */
+uint8_t g_death_fade_timer;  /* 0xEAF9 */
 
 /* Variables de sub-pixel de partícula (0xEAF2, 0xEAF4) */
 static uint8_t g_particle_spd;  /* 0xEAF2 — velocidad sub-pixel */

@@ -252,62 +252,8 @@ void game_init(void)
     g_player_row     = 0;
 }
 
-/* ==========================================================================
- * TITLE SCREEN (sub_4016 / sub_4A4A)
- *
- * Original Z80 summary (outer loop at 0x4016):
- *   4016  CALL sub_6383   ; reset keyframe queue (fill 0xEACD..0xEAD5 with 0xFF)
- *   4019  CALL sub_4D52   ; reset level state (player pos, room vars, etc.)
- *   ---- inner loop at 0x401C ----
- *   401C  CALL sub_4A4A   ; run title/intro sequence
- *   401F  CALL sub_4D52   ; reset level state again
- *   4022  JR C, sub_4016  ; if intro was aborted (C set), restart title
- *   4024  CALL sub_4029   ; clear a few state bytes (0xEAF1/F2/F4/F5)
- *   4027  JR sub_401C     ; loop forever (game starts inside sub_4A4A)
- *
- * sub_4A4A sets g_intro_active=1 then animates the title.
- * When the player presses fire, g_intro_active is cleared and the game begins.
- * The Carry flag on return from sub_4A4A signals a hard-reset condition.
- * ========================================================================== */
-void title_screen(void)
-{
-restart_title:
-    /* sub_6383: fill keyframe queue with 0xFF (sentinel = empty) */
-    memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
+/* title_screen() is in title.c */
 
-    /* sub_4D52: reset level state */
-    game_reset_level();
-
-inner_loop:
-    {
-        bool aborted = false; /* Carry flag from sub_4A4A */
-
-        /* sub_4A4A: title/intro animation */
-        g_intro_active = 1;
-        /* --- simplified intro loop --- */
-        while (g_intro_active) {
-            music_tick();          /* sub_4B4C  */
-            render_map();          /* sub_4C0B  */
-            if (!g_intro_active) break;
-            /* check if player pressed fire to skip into game */
-            if (hal_key_pressed()) {
-                g_intro_active = 0;
-            }
-            hal_wait_vsync();
-        }
-
-        game_reset_level();
-
-        if (aborted) goto restart_title;
-
-        /* sub_4029: clear auxiliary state bytes */
-        g_player_speed   = 0;  /* 0xEAF1 */
-        g_facing         = 0;  /* 0xEAF2 */
-        g_anim_frame     = 0;  /* 0xEAF4/F5 */
-
-        goto inner_loop;
-    }
-}
 
 /* ==========================================================================
  * RESET LEVEL STATE (sub_4D52)

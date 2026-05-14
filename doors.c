@@ -959,3 +959,18 @@ void doors_init(void)
 }
 
 uint8_t doors_keys_collected(void) { return g_keys_collected; }
+
+/* ==========================================================================
+ * doors_find_trigger() — Buscar trigger en la posición del jugador
+ * Llamado por scroll_update() en camera.c
+ * ========================================================================== */
+uint8_t doors_find_trigger(uint8_t col, uint8_t row)
+{
+    for (int i = 0; i < EXIT_SLOTS; i++) {
+        if (!g_exit_doors[i].active) continue;
+        if (g_exit_doors[i].col == col && g_exit_doors[i].row == row) {
+            return g_exit_doors[i].type;
+        }
+    }
+    return 0u;
+}

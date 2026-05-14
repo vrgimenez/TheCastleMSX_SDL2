@@ -21,6 +21,9 @@ set(GAME_SOURCES
     particles.c     # Chispas, partículas, trampa murciélago (sub_61F5 / sub_7279)
     doors.c         # Puertas, switches, bloques, pinchos, coleccionables (sub_442D)
     room.c          # Carga de salas, scripts de sala, transiciones (sub_5053)
+    music.c         # Reproductor PSG AY-3-8910, ISR de música (sub_75D4 / sub_7769)
+    camera.c        # Cámara, scroll, triggers de sala, render de mapa (sub_623C)
+    title.c         # Pantalla de título completa con animación (sub_4A4A)
 )
 
 # =============================================================================

@@ -292,3 +292,40 @@ Hay 8 tipos de trigger distintos identificados. Los más importantes son `0x20` 
 
 Lo que queda es `sub_4A4A` — la pantalla de título. ¿La decodificamos?
 
+> _Dale!_
+
+Vamos a leer sub_4A4A completo:El cuadro está completo. Ahora tengo todo para escribir la pantalla de título:Cero errores. El port está completo.
+
+**7.330 líneas de C, 14 archivos, 0 errores de compilación.**
+
+---
+
+**Lo que encontré en `sub_4A4A`:**
+
+La pantalla de título de The Castle no es una imagen estática — es una **animación vectorial codificada como datos**. El logo "THE CASTLE" se dibuja usando una secuencia de coordenadas (col, row) en ROM (`0x56D4`) que forman una espiral desde las esquinas de la pantalla hacia el centro. Cada entrada de la secuencia posiciona un sprite de 14×5 tiles (dos mitades de 7×5 cada una) un frame más cerca del centro. Es básicamente una animación de reveal en espiral hecha completamente con la name table del TMS9918A — sin sprites de hardware.
+
+Los créditos usan el mismo sistema de scripts de texto que las salas (`sub_62B0`, codificación ASCII desplazada), con 5 strips independientes que se deslizan desde la parte inferior de la pantalla hasta su posición final. Los datos en `0x567F` contienen `"[ 1985  ISAO YOSHIDA"` — el crédito al autor.
+
+El ciclo completo se repite **3 veces** (B=3) y si nadie pulsa nada en 3×128 frames (~6 segundos por ciclo = ~18 segundos totales), el juego hace `game_reset_level()` y carga la música del juego, iniciando automáticamente. Si el jugador pulsa fire en cualquier momento durante la animación, sale inmediatamente.
+
+---
+
+**Para compilar y correr ahora mismo:**
+
+```bash
+sudo apt install libsdl2-dev cmake
+cmake -B build && cmake --build build
+cp the_castle.rom build/
+./build/the_castle
+```
+
+O directamente con gcc:
+```bash
+gcc -std=c99 -O2 \
+    main.c the_castle.c tiles.c enemies.c particles.c \
+    doors.c room.c music.c camera.c title.c hal_sdl2.c \
+    $(sdl2-config --cflags --libs) -lm -o the_castle
+cp the_castle.rom ./
+./the_castle
+```
+
