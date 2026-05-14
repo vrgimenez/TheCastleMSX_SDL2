@@ -178,7 +178,7 @@ static void main_loop(void)
 
     while (running) {
         /* --- Título / intro --- */
-        music_play_title();
+      //music_play_title();
         g_intro_active = 1;
         g_state_flags  = 0;
 
@@ -190,6 +190,7 @@ static void main_loop(void)
                 return;
             }
 
+            title_screen();
             tiles_animate(g_state_flags);
             update_doors();
             update_enemies();
