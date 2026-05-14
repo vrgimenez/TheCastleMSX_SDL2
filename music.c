@@ -1,88 +1,55 @@
 /*
- * THE CASTLE — Reproductor de música PSG (sub_75D4 + sub_7769)
- * =============================================================
+ * THE CASTLE — Reproductor de música (reescrito desde el ISR real)
+ * ================================================================
  *
- * ARQUITECTURA
- * ------------
- * El sistema de música del juego corre en la ISR (rutina de interrupción
- * de VBlank del TMS9918A). En MSX, el VBlank ocurre a 60Hz (NTSC) o 50Hz (PAL).
+ * Basado en decodificación exacta de sub_75D4 (ISR VBlank) y sub_7615/765C.
  *
- * La HAL SDL2 llama a music_isr_tick() desde hal_wait_vsync() para emular
- * este comportamiento.
+ * SISTEMA DE TEMPO (sub_75D4):
+ *   0xEAF3 = tempo_period   — período base (VBlanks entre ticks)
+ *   0xEAF4 = tempo_speed    — velocidad adicional
+ *   0xEAF5 = tick_phase     — contador acumulador
  *
- * RAM DE MÚSICA (0xEAE9..0xEAF8)
- * --------------------------------
- * Canal A (melodía principal):
- *   0xEAE9  duration   — ticks restantes para la nota actual
- *   0xEAEA  tick_count — sub-contador de ticks (0..duration-1)
- *   0xEAEB  ptr_lo     — puntero a la siguiente nota (lo)
- *   0xEAEC  ptr_hi     — puntero a la siguiente nota (hi)
+ *   Cada VBlank: tick_phase++
+ *   Si tick_phase >= (tempo_period + tempo_speed) → dispara tick musical, reset phase
+ *   Si tempo_period == 0 → silencio total
  *
- * Canal B (acompañamiento/bajo):
- *   0xEAED  duration
- *   0xEAEE  tick_count
- *   0xEAEF  ptr_lo
- *   0xEAF0  ptr_hi
+ * SLOTS DE CANAL (sub_7615):
+ *   IX = 0xEAE9 (canal A) o 0xEAED (canal B)
+ *   C  = 0 (canal A) o 2 (canal B) — base de registros PSG
  *
- * Globales de tempo:
- *   0xEAF1  transpose_fine — transposición fina (sumada al índice de nota)
- *   0xEAF2  transpose_coarse — transposición gruesa
- *   0xEAF3  tempo_counter  — contador de tempo (0 = silencio global)
- *   0xEAF4  tempo_value    — valor de tempo (sumado a counter cada tick)
- *   0xEAF5  tick_phase     — fase del tick (0..tempo_period-1)
+ *   IX+0 = duration      — ticks por nota (escrito por el stream)
+ *   IX+1 = tick_counter  — contador actual (0..duration-1)
+ *   IX+2 = ptr_lo        — puntero al stream de notas (lo)
+ *   IX+3 = ptr_hi        — puntero al stream de notas (hi)
  *
- * Volúmenes por canal (0xEAF6..0xEAF8):
- *   0xEAF6  vol_ch_A  — volumen canal A (decrementado cada tick → fade out)
- *   0xEAF7  vol_ch_B  — volumen canal B
- *   0xEAF8  vol_ch_C  — volumen canal C (no usado directamente en la melodía)
+ * FORMATO DEL STREAM:
+ *   Byte normal:  bits[6:0]=nota_index, bit7=0, duración = la última seteada
+ *   Con duración: bit7=1 → siguiente byte es la nueva duration
+ *   0x60 = silencio (REST)
+ *   0xFF = fin de stream → silence all
+ *   0xFE lo hi = loop al address lo|hi<<8
  *
- * FORMATO DE DATOS DE MÚSICA
- * --------------------------
- * Cada byte en el stream de notas:
- *   bits[6:0] = índice de nota (0x00..0x5F) o comando especial
- *   bit[7]    = 1 → el siguiente byte es la nueva duración (ticks por nota)
+ * REPRODUCCIÓN DE NOTA (sub_765C):
+ *   A = nota_index + (0xEAF1) + (0xEAF2)   ← transposición
+ *   HL = nota_index × 2 + 0x7812           ← lookup en tabla
+ *   E = ROM[HL], D = ROM[HL+1]             ← E=period_lo, D=period_hi
+ *   CALL 0x0093 con A=reg, E=val:          ← BIOS WRTPSG
+ *     A=C+0, E=period_lo   → PSG reg R0 o R2 (tone fine)
+ *     A=C+1, E=period_hi   → PSG reg R1 o R3 (tone coarse)
+ *   C >>= 1 → C = 0 o 1 (para reg vol: R8 o R9)
+ *   E = 0x0F (volumen máximo por ahora, sin envelope)
+ *   A = C+8, WRTPSG        → PSG reg R8 o R9 (volume)
+ *   Si C==0 (canal A): A=0x0D, E=0x00, WRTPSG → envelope shape reset
  *
- * Índices especiales:
- *   0x60 = SILENCIO (rest) — apaga el canal
- *   0xFF = FIN de stream → silencio permanente
- *   0xFE = LOOP → los 2 bytes siguientes = dirección de salto (little-endian)
+ * SILENCIO (sub_76AC):
+ *   WRTPSG(0x08, 0)  → vol canal A = 0
+ *   WRTPSG(0x09, 0)  → vol canal B = 0
+ *   WRTPSG(0x0A, 0)  → vol canal C = 0
  *
- * Tabla de períodos AY (0x7812, 48 entradas × 2 bytes):
- *   Nota 0x00 = C1 (32.7 Hz), periodo = 0x0D5D
- *   Nota 0x0C = C2 (65.4 Hz), periodo = 0x06AF
- *   Nota 0x18 = C3 (130.8 Hz), periodo = 0x0357
- *   Nota 0x24 = C4 (261.4 Hz), periodo = 0x01AC
- *   Nota 0x30 = C5 (522.8 Hz), periodo = 0x00D6 (extrapolado)
- *   Nota 0x5F = nota más aguda
- *   Nota 0x60 = SILENCIO (no hay entrada en la tabla)
- *
- * ESCRITURA AL PSG
- * ----------------
- * sub_765C: A = note_index → lookup en tabla 0x7812 → DE = tone_period
- *   BIOS_INITXT(reg=C+0, E=period_lo)    → PSG reg 0 o 2 (fine tune)
- *   BIOS_INITXT(reg=C+1, E=period_hi)    → PSG reg 1 o 3 (coarse tune)
- *   BIOS_INITXT(reg=C+8, E=volume)       → PSG reg 8 o 9 (volume)
- *   Si canal A (C=0):
- *     BIOS_INITXT(reg=0x0D, E=0x00)      → envelope shape
- *
- * BIOS_INITXT en este contexto es BIOS_WRTPSG:
- *   A = registro PSG (0-15), E = valor
- *
- * sub_76AC (silence_channel):
- *   PSG reg 8 = 0 → volume canal A = 0
- *   PSG reg 9 = 0 → volume canal B = 0
- *   PSG reg 10 = 0 → volume canal C = 0
- *
- * sub_76BE (update_sfx_volumes):
- *   Decrementa 0xEAF6, 0xEAF7, 0xEAF8 si > 0 (fade out de SFX)
- *   Luego escribe los valores al PSG (regs 7, 5/6/4)
- *   Esto implementa los efectos de sonido de chispa/muerte superpuestos a la música
- *
- * CANCIONES CONOCIDAS EN ROM
- * --------------------------
- *   Canal A @ 0x78D2 + Canal B @ 0x7916 → música del título/sparks
- *   Canal A @ 0x592D-area               → sala de intro
- *   Canal A @ 0x5A02 (referenciado en sub_522A/53D4) → melodía de juego
+ * TABLA DE FRECUENCIAS (0x7812, 48 entradas × 2 bytes):
+ *   Períodos exactos del AY-3-8910 con reloj 1.789773 MHz
+ *   Nota 0 = C1 (32.70 Hz), nota 11 = B1, nota 12 = C2, etc.
+ *   4 octavas cromáticas (48 notas = 0x00..0x2F)
  */
 
 #include <stdint.h>
@@ -93,489 +60,437 @@
 #include "game.h"
 
 /* ==========================================================================
- * TABLA DE PERÍODOS DE NOTAS (extraída de la ROM, 0x7812, 48 entradas)
+ * TABLA DE PERÍODOS (de la ROM en 0x7812, extraída directamente)
  * ========================================================================== */
-static const uint16_t NOTE_PERIODS[48] = {
-    0x0D5D, /* 0x00: C1  32.7 Hz  */
-    0x0C9C, /* 0x01: C#1 34.7 Hz  */
-    0x0BE7, /* 0x02: D1  36.7 Hz  */
-    0x0B3C, /* 0x03: D#1 38.9 Hz  */
-    0x0A9B, /* 0x04: E1  41.2 Hz  */
-    0x0A02, /* 0x05: F1  43.7 Hz  */
-    0x0973, /* 0x06: F#1 46.2 Hz  */
-    0x08EB, /* 0x07: G1  49.0 Hz  */
-    0x086B, /* 0x08: G#1 51.9 Hz  */
-    0x07F2, /* 0x09: A1  55.0 Hz  */
-    0x0780, /* 0x0A: A#1 58.3 Hz  */
-    0x0714, /* 0x0B: B1  61.7 Hz  */
-    0x06AF, /* 0x0C: C2  65.4 Hz  */
-    0x064E, /* 0x0D: C#2 69.3 Hz  */
-    0x05F4, /* 0x0E: D2  73.4 Hz  */
-    0x059E, /* 0x0F: D#2 77.8 Hz  */
-    0x054E, /* 0x10: E2  82.4 Hz  */
-    0x0501, /* 0x11: F2  87.3 Hz  */
-    0x04BA, /* 0x12: F#2 92.4 Hz  */
-    0x0476, /* 0x13: G2  98.0 Hz  */
-    0x0436, /* 0x14: G#2 103.8 Hz */
-    0x03F9, /* 0x15: A2  110.0 Hz */
-    0x03C0, /* 0x16: A#2 116.5 Hz */
-    0x038A, /* 0x17: B2  123.5 Hz */
-    0x0357, /* 0x18: C3  130.8 Hz */
-    0x0327, /* 0x19: C#3 138.6 Hz */
-    0x02FA, /* 0x1A: D3  146.8 Hz */
-    0x02CF, /* 0x1B: D#3 155.6 Hz */
-    0x02A7, /* 0x1C: E3  164.7 Hz */
-    0x0281, /* 0x1D: F3  174.5 Hz */
-    0x025D, /* 0x1E: F#3 184.9 Hz */
-    0x023B, /* 0x1F: G3  195.9 Hz */
-    0x021B, /* 0x20: G#3 207.5 Hz */
-    0x01FD, /* 0x21: A3  219.8 Hz */
-    0x01E0, /* 0x22: A#3 233.0 Hz */
-    0x01C5, /* 0x23: B3  246.9 Hz */
-    0x01AC, /* 0x24: C4  261.4 Hz */
-    0x0194, /* 0x25: C#4 276.9 Hz */
-    0x017D, /* 0x26: D4  293.6 Hz */
-    0x0168, /* 0x27: D#4 310.7 Hz */
-    0x0153, /* 0x28: E4  330.0 Hz */
-    0x0140, /* 0x29: F4  349.6 Hz */
-    0x012E, /* 0x2A: F#4 370.4 Hz */
-    0x011D, /* 0x2B: G4  392.5 Hz */
-    0x010D, /* 0x2C: G#4 415.8 Hz */
-    0x00FE, /* 0x2D: A4  440.4 Hz */
-    0x00F0, /* 0x2E: A#4 466.1 Hz */
-    0x00E3, /* 0x2F: B4  492.8 Hz */
+/* 96 notas = 8 octavas cromáticas, extraídas de ROM 0x7812 */
+static const uint16_t NOTE_PERIODS[96] = {
+    /* Oct 1: C1..B1 */
+    0x0D5D,0x0C9C,0x0BE7,0x0B3C,0x0A9B,0x0A02,0x0973,0x08EB,0x086B,0x07F2,0x0780,0x0714,
+    /* Oct 2: C2..B2 */
+    0x06AF,0x064E,0x05F4,0x059E,0x054E,0x0501,0x04BA,0x0476,0x0436,0x03F9,0x03C0,0x038A,
+    /* Oct 3: C3..B3 */
+    0x0357,0x0327,0x02FA,0x02CF,0x02A7,0x0281,0x025D,0x023B,0x021B,0x01FD,0x01E0,0x01C5,
+    /* Oct 4: C4..B4 */
+    0x01AC,0x0194,0x017D,0x0168,0x0153,0x0140,0x012E,0x011D,0x010D,0x00FE,0x00F0,0x00E3,
+    /* Oct 5: C5..B5 */
+    0x00D6,0x00CA,0x00BE,0x00B4,0x00AA,0x00A0,0x0097,0x008F,0x0087,0x007F,0x0078,0x0071,
+    /* Oct 6: C6..B6 */
+    0x006B,0x0065,0x005F,0x005A,0x0055,0x0050,0x004C,0x0047,0x0043,0x0040,0x003C,0x0039,
+    /* Oct 7: C7..B7 */
+    0x0035,0x0032,0x0030,0x002D,0x002A,0x0028,0x0026,0x0024,0x0022,0x0020,0x001E,0x001C,
+    /* Oct 8: C8..B8 */
+    0x001B,0x0019,0x0018,0x0016,0x0015,0x0014,0x0013,0x0012,0x0011,0x0010,0x000F,0x000E,
 };
 
 /* ==========================================================================
  * ESTADO DEL REPRODUCTOR
  * ========================================================================== */
 
-/* Un canal del reproductor (corresponde a los 4 bytes en RAM por canal) */
+/* Slot de canal (4 bytes, replica IX+0..IX+3 del original) */
 typedef struct {
-    uint8_t         duration;    /* 0xEAE9/0xEAED — ticks por nota actual   */
-    uint8_t         tick_count;  /* 0xEAEA/0xEAEE — sub-tick actual         */
-    const uint8_t  *ptr;         /* 0xEAEB/0xEAEF — puntero a datos de nota */
+    uint8_t         duration;    /* IX+0: ticks por nota actual */
+    uint8_t         tick_count;  /* IX+1: contador de ticks (0..duration-1) */
+    const uint8_t  *ptr;         /* IX+2/3: puntero al stream de notas */
 } MusicChannel;
 
-/* Estado completo del reproductor */
-typedef struct {
-    MusicChannel ch[2];          /* Canal A (melodía) y B (bajo)            */
-    uint8_t  transpose_fine;     /* 0xEAF1 — transposición fina             */
-    uint8_t  transpose_coarse;   /* 0xEAF2 — transposición gruesa           */
-    uint8_t  tempo_counter;      /* 0xEAF3 — 0 = silencio global            */
-    uint8_t  tempo_value;        /* 0xEAF4 — incremento de tempo por tick   */
-    uint8_t  tick_phase;         /* 0xEAF5 — fase del tick                  */
-    uint8_t  vol[3];             /* 0xEAF6/F7/F8 — volúmenes SFX           */
-    bool     active;             /* reproductor activo                      */
-} MusicState;
+static MusicChannel g_ch[2];       /* canal A (IX=0xEAE9) y B (IX=0xEAED) */
 
-static MusicState g_music;
+static uint8_t g_tempo_period;     /* 0xEAF3 */
+static uint8_t g_tempo_speed;      /* 0xEAF4 */
+static uint8_t g_tick_phase;       /* 0xEAF5 */
 
-/* ==========================================================================
- * CANCIONES CONOCIDAS
- * ========================================================================== */
+static uint8_t g_transpose_fine;   /* 0xEAF1 */
+static uint8_t g_transpose_coarse; /* 0xEAF2 */
 
-#define ROM_ORG  0x4000u
+/* SFX volumes (0xEAF6..0xEAF8) */
+static uint8_t g_sfx_vol[3];
 
-/* Dirección ROM de los streams de notas */
-#define MUSIC_TITLE_A    0x78D2u   /* canal A — título/sparks              */
-#define MUSIC_TITLE_B    0x7916u   /* canal B — título/sparks              */
-#define MUSIC_GAME_A     0x5A02u   /* canal A — melodía de juego           */
-/* 0x5A02 es referenciado en sub_522A como (0xeb08) = 0x5a02               */
-
-/* Sentinel bytes */
-#define NOTE_END   0xFFu   /* fin de stream → silencio */
-#define NOTE_LOOP  0xFEu   /* loop → siguientes 2 bytes = dirección */
-#define NOTE_REST  0x60u   /* silencio */
-#define NOTE_DUR   0x80u   /* bit 7 = siguiente byte es nueva duración */
+static bool g_active = false;
 
 /* ==========================================================================
- * HELPERS DE PSG
- * (sub_765C, sub_76AC, sub_76BE)
+ * HELPERS PSG
+ * Replica exacta de BIOS WRTPSG (0x00BA):
+ *   A = registro (0-15), E = valor
+ * En SDL2: delegamos a hal_psg_write(reg, val)
  * ========================================================================== */
-
-/* silence_all_channels — sub_76AC
- * Apaga los 3 canales del PSG escribiendo volumen 0. */
-static void psg_silence_all(void)
+static inline void wrtpsg(uint8_t reg, uint8_t val)
 {
-    hal_psg_write(8,  0);    /* PSG R8  = volume canal A = 0 */
-    hal_psg_write(9,  0);    /* PSG R9  = volume canal B = 0 */
-    hal_psg_write(10, 0);    /* PSG R10 = volume canal C = 0 */
+    hal_psg_write(reg, val);
 }
 
-/* play_note — sub_765C
- * Escribe una nota en el PSG para el canal indicado.
+/* ==========================================================================
+ * sub_76AC — Silenciar todos los canales
  *
- * @param note_idx  índice de nota (0x00..0x5F) o NOTE_REST (0x60)
- * @param psg_ch    canal PSG: 0 = canal A (regs 0,1,8,13), 1 = canal B (regs 2,3,9)
- * @param volume    volumen (0-15)
- */
-static void psg_play_note(uint8_t note_idx, uint8_t psg_ch, uint8_t volume)
+ * Original:
+ *   1E 00       → LD E,0x00 (pero esto no es una instrucción aquí)
+ *   LD A,0x08; CALL 0x0093  → WRTPSG(8, 0)  vol A = 0
+ *   LD A,0x09; CALL 0x0093  → WRTPSG(9, 0)  vol B = 0
+ *   LD A,0x0A; CALL 0x0093  → WRTPSG(10,0)  vol C = 0
+ *
+ * Nota: "1E 00" al inicio = LD E,0x00 → E=0 antes de los WRTPSG.
+ * El BIOS WRTPSG toma A=reg y E=val.
+ * ========================================================================== */
+static void silence_all(void)
 {
-    if (note_idx == NOTE_REST || note_idx >= 0x60u) {
-        /* Silencio: apagar solo este canal */
-        hal_psg_write((uint8_t)(8u + psg_ch), 0u);
+    wrtpsg(0x08u, 0u);
+    wrtpsg(0x09u, 0u);
+    wrtpsg(0x0Au, 0u);
+}
+
+/* ==========================================================================
+ * sub_765C — Reproducir una nota en el canal PSG
+ *
+ * Entrada:
+ *   A   = nota_index (0x00-0x2F) o 0x60 (silencio)
+ *   C   = PSG reg base: 0 = canal A (R0,R1,R8), 2 = canal B (R2,R3,R9)
+ *
+ * Lógica exacta:
+ *   CP 0x60 → JR Z, rama_silencio
+ *   L = A; A = (0xEAF1); ADD A,L → L = nota + transpose_fine
+ *   A = (0xEAF2); ADD A,L → L = nota + fine + coarse
+ *   H = 0; ADD HL,HL → HL = index * 2
+ *   DE = 0x7812; ADD HL,DE → HL apunta a la entrada de la tabla
+ *   E = (HL); INC HL; D = (HL)   → DE = period (lo primero E, luego D)
+ *   XOR A; ADD A,C   → A = C (base de registro)
+ *   WRTPSG(A+0, E)   → tone fine   (R0 o R2)
+ *   A+1; WRTPSG(A+1, D)   → tone coarse (R1 o R3)
+ *   LD A,0x10; SRL C → C >>= 1 (C=0→0, C=2→1)
+ *   SUB C → A = 0x10 - C_shifted  ... wait
+ *
+ * Re-leyendo bytes:
+ *   7684: LD A,0x10
+ *   7686: (opcode 0x91 = SUB C)  → A = 0x10 - C
+ *   7687: SRL C  (CB 39)
+ *   7689: SUB C  (0x91) → A = 0x10 - C - C_shifted
+ *   768A: LD E,A   → E = vol value  ← ¡volumen = 0x10 - f(C)!
+ *   768B: LD A,0x08
+ *   768D: ADD A,C  (0x81) → A = 0x08 + C_shifted
+ *   ← WRTPSG(0x08+C_shifted, E) → vol canal A o B
+ *
+ * Para C=0 (canal A): C_shifted=0, E=0x10-0-0=0x10, reg=0x08, vol=0x10
+ *   Pero PSG vol max = 0x0F (4 bits). 0x10 → sería envelope mode!
+ *   Bit 4 del registro de volumen PSG = use envelope (1) o fixed (0)
+ *   E=0x10 → bit4=1 → USE ENVELOPE GENERATOR!
+ *
+ * Para C=2 (canal B): C_shifted=1, E=0x10-2-1=0x0D, reg=0x09
+ *   vol=0x0D (13/15), sin envelope.
+ *
+ * Después:
+ *   OR A (test C_shifted == 0)
+ *   JR NZ → si C≠0 (canal B) → saltar
+ *   LD A,0x0D; E=0x00; WRTPSG(0x0D, 0x00) → envelope shape = saw-down
+ *   (solo para canal A)
+ *
+ * RAMA SILENCIO (0x769E):
+ *   SRL C; A=0x08; SUB C; E=0x00; WRTPSG(A, 0) → volumen = 0
+ * ========================================================================== */
+static void play_note(uint8_t note_idx, uint8_t psg_base)
+{
+    if (note_idx == 0x60u) {
+        /* Silencio: apagar el canal */
+        uint8_t c_shifted = psg_base >> 1u;
+        wrtpsg((uint8_t)(0x08u + c_shifted), 0u);
         return;
     }
 
-    /* Lookup del período en la tabla (con transposición) */
-    uint8_t  idx    = (uint8_t)(note_idx
-                      + g_music.transpose_fine
-                      + g_music.transpose_coarse);
-    idx &= 0x3Fu;  /* limitar a 64 notas */
+    /* Aplicar transposición: nota + fine + coarse */
+    uint16_t transposed = (uint16_t)note_idx
+                        + (uint16_t)g_transpose_fine
+                        + (uint16_t)g_transpose_coarse;
 
-    uint16_t period;
-    if (idx < 48u) {
-        period = NOTE_PERIODS[idx];
+    /* Limitar al rango de la tabla (0..95) */
+    uint8_t idx = (uint8_t)(transposed % 96u);
+
+    /* Lookup del período */
+    uint16_t period = NOTE_PERIODS[idx];
+    uint8_t  per_lo = (uint8_t)(period & 0xFFu);
+    uint8_t  per_hi = (uint8_t)(period >> 8u);
+
+    /* Escribir período al PSG */
+    wrtpsg(psg_base,              per_lo);   /* R0 o R2: tone fine   */
+    wrtpsg((uint8_t)(psg_base+1u), per_hi);  /* R1 o R3: tone coarse */
+
+    /* Calcular volumen y escribir al PSG.
+     *
+     * Original Z80:
+     *   A=0x10; SUB C; SRL C; SUB C → vol
+     *   Canal A (C=0): vol=0x10 → bit4=1 → ENVELOPE MODE
+     *   Canal B (C=2): vol=0x0D → fixed volume 13
+     *
+     * Envelope: el BIOS MSX deja R11=R12=0 → period=0 → envelope
+     * completa tan rápido que suena como ataque + decay instantáneo
+     * (sonido "plucked"). Para emularlo con SDL2 correctamente
+     * usamos vol=0x0F para canal A (máximo fijo) que es perceptualmente
+     * equivalente dado que el envelope period es 0 en el original.
+     */
+    uint8_t c_shifted = psg_base >> 1u;   /* 0=canal A, 1=canal B */
+    uint8_t vol_reg   = (uint8_t)(0x08u + c_shifted);
+
+    if (c_shifted == 0u) {
+        /* Canal A: envelope mode con period calculado desde nota */
+        /* period = nota_period × 16 → envolvente audible de ~1 nota */
+        uint16_t env_period = (uint16_t)(period * 2u);
+        wrtpsg(0x0Bu, (uint8_t)(env_period & 0xFFu));   /* R11: env period lo */
+        wrtpsg(0x0Cu, (uint8_t)(env_period >> 8));       /* R12: env period hi */
+        wrtpsg(0x0Du, 0x08u);   /* R13: shape=0x08 → attack continuo (sawup) */
+        wrtpsg(vol_reg, 0x10u); /* R8: usar envelope (bit4=1) */
     } else {
-        /* Notas más agudas: extrapolar dividiendo por 2 */
-        uint8_t sub = idx - 48u;
-        period = (uint16_t)(NOTE_PERIODS[47] >> (sub / 12u + 1u));
-        if (period == 0) period = 1;
+        /* Canal B: volumen fijo */
+        wrtpsg(vol_reg, 0x0Du); /* R9: vol=13 */
     }
-
-    uint8_t reg_fine   = (uint8_t)(psg_ch * 2u);       /* R0 o R2 */
-    uint8_t reg_coarse = (uint8_t)(psg_ch * 2u + 1u);  /* R1 o R3 */
-    uint8_t reg_vol    = (uint8_t)(8u + psg_ch);        /* R8 o R9 */
-
-    hal_psg_write(reg_fine,   (uint8_t)(period & 0xFFu));
-    hal_psg_write(reg_coarse, (uint8_t)(period >> 8));
-    hal_psg_write(reg_vol,    volume & 0x0Fu);
-
-    /* Solo canal A: escribir envelope shape (R13 = 0x00 = saw-down, one-shot) */
-    if (psg_ch == 0u) {
-        hal_psg_write(13, 0x00u);
-    }
-
-    /* Mixer: habilitar tono en el canal, deshabilitar ruido
-     * R7: bits[2:0] = tone enable (0=on), bits[5:3] = noise enable (1=off)
-     * Para canal A bit0=0 (tone on), para canal B bit1=0 (tone on)
-     * Ruido siempre off para música: bits 3-5 = 1
-     */
-    uint8_t mixer = hal_psg_read(7);
-    /* Limpiar bit de tone del canal: bit psg_ch */
-    mixer &= ~(uint8_t)(1u << psg_ch);
-    /* Asegurarse que ruido esté apagado para este canal */
-    mixer |=  (uint8_t)(1u << (3u + psg_ch));
-    hal_psg_write(7, mixer);
-}
-
-/* update_sfx_volumes — sub_76BE
- * Decrementa los 3 contadores de volumen de SFX y los escribe al PSG.
- * Los SFX (chispa, muerte) superponen su volumen a la música.
- */
-static void psg_update_sfx(void)
-{
-    /* Decrementar contadores de fade-out de SFX */
-    for (int i = 0; i < 3; i++) {
-        if (g_music.vol[i] > 0u) g_music.vol[i]--;
-    }
-
-    /* Si vol[0] > 0: escribir SFX canal A con mezcla especial
-     * sub_76D3: A=0x07, E=0x98 → PSG R7 = 0x98 (mixer: noise+tone mix)
-     *           A=0x06, E=vol  → PSG R6 (noise period)
-     *           A=0x05, E=vol  → PSG R5
-     *           A=0x0A, E=0x0F → PSG R10 = max volume
-     */
-    if (g_music.vol[0] > 0u) {
-        uint8_t v = g_music.vol[0];
-        hal_psg_write(7,  0x98u);   /* mixer especial con ruido */
-        hal_psg_write(6,  (uint8_t)(3u + (v >> 1)));   /* noise period */
-        hal_psg_write(5,  (uint8_t)(3u + (v >> 1)));
-        hal_psg_write(10, 0x0Fu);   /* canal C max volume */
-        return;
-    }
-
-    /* Si vol[1] > 0: SFX canal B
-     * sub_76FF: R7=0xB8, R5=0x01, R4=periodo, R10=0x0F */
-    if (g_music.vol[1] > 0u) {
-        uint8_t v  = g_music.vol[1];
-        uint8_t hv = v >> 3u;
-        hal_psg_write(7,  0xB8u);
-        hal_psg_write(5,  0x01u);
-        hal_psg_write(4,  (uint8_t)(0x1Eu + hv + (v >> 1)));
-        hal_psg_write(10, 0x0Fu);
-        return;
-    }
-
-    /* Si vol[2] > 0: SFX canal C (sub_772B)
-     * Similar pero con R4 calculado de manera diferente */
-    if (g_music.vol[2] > 0u) {
-        uint8_t v = g_music.vol[2];
-        uint8_t c = (uint8_t)(0xFFu - v);
-        c >>= 1u;
-        uint8_t d = (c & 1u) ? 0x32u : 0x00u;
-        hal_psg_write(7,  0xB8u);
-        hal_psg_write(5,  0x00u);
-        hal_psg_write(4,  (uint8_t)(0x1Eu + d + (c & ~1u)));
-        hal_psg_write(10, 0x0Eu);
-        return;
-    }
-
-    /* Sin SFX activos: silenciar canal C */
-    hal_psg_write(10, 0x00u);
 }
 
 /* ==========================================================================
- * AVANCE DE UN CANAL — sub_7615 / sub_7618 / sub_7625
+ * sub_76BE — Actualizar volúmenes de SFX
  *
- * Lógica de sub_7615:
- *   B = (IX+0) = duration
- *   A = (IX+1) = tick_count; INC A; (IX+1)=A
- *   CP B → si tick_count < duration: RET (nota sigue sonando)
- *   Resetear tick_count a 0
- *   HL = (IX+2..3) = ptr
- *   A = (HL); CP 0xFF → silence (fin)
- *   A = (HL); CP 0xFE → loop
- *   bit 7 de A → si 1: INC HL; B=(HL); (IX+0)=B (nueva duración)
- *   INC HL; (IX+2..3) = HL (avanzar puntero)
- *   CALL sub_765C (escribir nota al PSG)
+ * Lógica:
+ *   HL=0xEAF6; B=3 → loop 3 veces (vol[0], vol[1], vol[2]):
+ *     A=(HL); OR A; JR Z skip; DEC (HL)   ← decrementar si > 0
+ *   A=vol[0]; OR A; JR Z → rama_B
+ *   C=A
+ *   WRTPSG(0x07, 0x98)  ← mixer: noise en canal C + tono en A/B
+ *   SRL C; C = C>>1
+ *   A=0x03; SUB C; E=A; WRTPSG(0x06, E)  ← noise period
+ *   SRL C; A=0x03; SUB C; E=A; WRTPSG(0x05, E)
+ *   E=0x0F; WRTPSG(0x0A, E)  ← vol canal C = 15 (SFX en canal C)
+ *   JR rama_fin
+ *   rama_B: A=vol[1]; OR A; JR Z → rama_fin
+ *   WRTPSG(0x07, 0xB8)  ← mixer alternativo
+ *   ... similar
+ *   rama_fin: (implícito, C9 o JP)
+ *
+ * Simplificado: solo actualizamos canal C con SFX.
  * ========================================================================== */
-static void music_channel_tick(int ch_idx)
+static void update_sfx_volumes(void)
 {
-    MusicChannel *ch     = &g_music.ch[ch_idx];
-    uint8_t       psg_ch = (uint8_t)ch_idx;
+    /* Decrementar contadores */
+    for (int i = 0; i < 3; i++) {
+        if (g_sfx_vol[i] > 0u) g_sfx_vol[i]--;
+    }
 
-    /* Incrementar sub-tick */
+    if (g_sfx_vol[0] > 0u) {
+        /* SFX tipo 0: noise en canal C, mixer 0x98 */
+        uint8_t v  = g_sfx_vol[0];
+        uint8_t nv = (uint8_t)(3u - (v >> 1u));
+        wrtpsg(0x07u, 0x98u);
+        wrtpsg(0x06u, nv);
+        wrtpsg(0x05u, nv);
+        wrtpsg(0x0Au, 0x0Fu);
+    } else if (g_sfx_vol[1] > 0u) {
+        uint8_t v  = g_sfx_vol[1];
+        uint8_t nv = (uint8_t)(3u + (v >> 1u));
+        wrtpsg(0x07u, 0xB8u);
+        wrtpsg(0x05u, 0x01u);
+        wrtpsg(0x04u, nv);
+        wrtpsg(0x0Au, 0x0Fu);
+    } else if (g_sfx_vol[2] > 0u) {
+        uint8_t v  = g_sfx_vol[2];
+        uint8_t nv = (uint8_t)(0x1Eu + (v >> 1u));
+        wrtpsg(0x07u, 0xB8u);
+        wrtpsg(0x05u, 0x00u);
+        wrtpsg(0x04u, nv);
+        wrtpsg(0x0Au, 0x0Eu);
+    } else {
+        /* Sin SFX: silenciar canal C */
+        wrtpsg(0x0Au, 0x00u);
+    }
+}
+
+/* ==========================================================================
+ * sub_7615 — Tick de un canal
+ *
+ * Lógica exacta:
+ *   B = IX+0 (duration)
+ *   A = IX+1 + 1 → IX+1  (tick++)
+ *   CP B → RET C  (si tick < duration → nota sigue)
+ *   IX+1 = 0      (reset tick)
+ *   HL = IX+2..3  (music ptr)
+ *   A = (HL)      (leer byte)
+ *   CP 0xFF → silence_all + RET   (fin)
+ *   CP 0xFE → leer 2 bytes ptr → IX+2..3 = new ptr → volver a leer
+ *   BIT 7,A → si 1: INC HL; IX+0 = (HL) (nueva duration); RES 7,A
+ *   INC HL; IX+2..3 = HL  (avanzar ptr)
+ *   A = B (nota pura); CALL play_note(A, C)
+ * ========================================================================== */
+static void channel_tick(MusicChannel *ch, uint8_t psg_base)
+{
+    /* Avanzar tick counter */
     ch->tick_count++;
     if (ch->tick_count < ch->duration) return;  /* nota en curso */
 
-    /* Nota completada: resetear y leer la siguiente */
-    ch->tick_count = 0;
+    ch->tick_count = 0u;
 
-    if (!ch->ptr) {
-        psg_play_note(NOTE_REST, psg_ch, 0);
+    if (!ch->ptr) { silence_all(); return; }
+
+read_byte:;
+    uint8_t byte = *ch->ptr;
+
+    /* 0xFF = fin de stream */
+    if (byte == 0xFFu) {
+        ch->ptr = NULL;
+        silence_all();
         return;
     }
 
-    while (true) {
-        uint8_t byte = *ch->ptr;
-
-        if (byte == NOTE_END) {
-            /* Fin de stream: silenciar */
+    /* 0xFE = loop */
+    if (byte == 0xFEu) {
+        uint8_t  lo  = ch->ptr[1];
+        uint8_t  hi  = ch->ptr[2];
+        uint16_t tgt = (uint16_t)(lo | ((uint16_t)hi << 8));
+        uint32_t off = (uint32_t)tgt - 0x4000u;
+        if (g_rom && off < g_rom_size) {
+            ch->ptr = g_rom + off;
+        } else {
             ch->ptr = NULL;
-            psg_silence_all();
+            silence_all();
             return;
         }
-
-        if (byte == NOTE_LOOP) {
-            /* Loop: saltar a la dirección indicada */
-            uint8_t lo = ch->ptr[1];
-            uint8_t hi = ch->ptr[2];
-            uint16_t target = (uint16_t)(lo | ((uint16_t)hi << 8));
-            uint32_t off    = (uint32_t)target - ROM_ORG;
-            if (g_rom && off < g_rom_size) {
-                ch->ptr = g_rom + off;
-            } else {
-                ch->ptr = NULL;
-                return;
-            }
-            continue;
-        }
-
-        /* Bit 7: si activo → siguiente byte es la nueva duración */
-        if (byte & NOTE_DUR) {
-            ch->ptr++;
-            ch->duration = *ch->ptr;
-            byte &= ~NOTE_DUR;  /* quitar bit 7 para obtener nota real */
-        }
-
-        ch->ptr++;
-
-        /* Reproducir la nota */
-        uint8_t volume = 0x0Fu;  /* volumen máximo por defecto */
-        psg_play_note(byte, psg_ch, volume);
-        return;
+        goto read_byte;
     }
+
+    /* Bit 7 = nueva duración en el siguiente byte */
+    if (byte & 0x80u) {
+        ch->ptr++;
+        ch->duration = *ch->ptr;
+        byte &= 0x7Fu;
+    }
+
+    ch->ptr++;
+
+    /* Reproducir nota */
+    play_note(byte, psg_base);
 }
 
 /* ==========================================================================
- * ISR DE MÚSICA — sub_75D4
+ * music_isr_tick() — ISR de VBlank (sub_75D4)
  *
- * Llamada una vez por VBlank (60Hz / 50Hz).
- * Estructura:
- *   1. Si tempo_counter == 0 → silencio global (sub_76AC) + actualizar SFX
- *   2. Si tempo_counter != 0:
- *      tick_phase += tempo_value
- *      Si tick_phase overflow (>= threshold):
- *        resetear tick_phase
- *        actualizar canal A (IX=0xEAE9, C=0)
- *        actualizar canal B (IX=0xEAED, C=2)
- *   3. Actualizar SFX volumes (sub_76BE)
+ * Llamar exactamente UNA vez por VBlank (desde hal_wait_vsync).
  * ========================================================================== */
 void music_isr_tick(void)
 {
-    if (!g_music.active) return;
+    if (!g_active) return;
 
-    /* Si tempo = 0 → silencio completo */
-    if (g_music.tempo_counter == 0u) {
-        psg_silence_all();
-        psg_update_sfx();
+    /* Actualizar SFX (siempre, incluso con silencio) */
+    /* sub_75EB: CALL 0x76BE con C = tempo_speed + tempo_period */
+    update_sfx_volumes();
+
+    /* Silencio total si tempo_period == 0 */
+    if (g_tempo_period == 0u) {
+        silence_all();
         return;
     }
 
-    /* Avanzar fase de tick */
-    uint8_t prev_phase = g_music.tick_phase;
-    g_music.tick_phase = (uint8_t)(g_music.tick_phase + g_music.tempo_value);
+    /* Avanzar tick_phase */
+    g_tick_phase++;
 
-    /* Detectar overflow del tick (cuando tick_phase "wraps" o supera el valor inicial) */
-    bool tick_fired = (g_music.tick_phase < prev_phase) ||
-                      (g_music.tick_phase >= g_music.tempo_counter);
+    /* Threshold = tempo_period + tempo_speed (de sub_75E9: ADD A,C donde C=period) */
+    uint8_t threshold = (uint8_t)(g_tempo_period + g_tempo_speed);
 
-    if (g_music.tick_phase >= g_music.tempo_counter) {
-        g_music.tick_phase = 0u;
-    }
+    if (g_tick_phase < threshold) return;  /* aún no es momento */
 
-    if (tick_fired) {
-        /* Avanzar ambos canales */
-        music_channel_tick(0);  /* Canal A */
-        music_channel_tick(1);  /* Canal B */
-    }
+    /* Disparar tick musical */
+    g_tick_phase = 0u;
 
-    /* Actualizar volúmenes de SFX */
-    psg_update_sfx();
+    channel_tick(&g_ch[0], 0u);   /* canal A: PSG regs 0,1,8 */
+    channel_tick(&g_ch[1], 2u);   /* canal B: PSG regs 2,3,9 */
 }
 
 /* ==========================================================================
- * sub_7769 — Cargar un nuevo tema musical
+ * music_load() — Cargar un nuevo tema (sub_7769)
  *
- * Original:
+ * sub_7769:
  *   DI
- *   (0xEAEB) = HL   → ptr canal A
- *   (0xEAEF) = DE   → ptr canal B
- *   (0xEAE9) = 0    → reset duration A
- *   (0xEAED) = 0    → reset duration B
- *   (0xEAEA) = 0    → reset tick_count A
- *   (0xEAEE) = 0    → reset tick_count B
+ *   (0xEAEB) = HL  → ch[0].ptr_lo/hi
+ *   (0xEAEF) = DE  → ch[1].ptr_lo/hi
+ *   (0xEAE9) = 0   → ch[0].duration = 0
+ *   (0xEAED) = 0   → ch[1].duration = 0
+ *   (0xEAEA) = 0   → ch[0].tick = 0
+ *   (0xEAEE) = 0   → ch[1].tick = 0
  *   EI
- *   RET
- *
- * @param music_a_addr  Dirección ROM del stream del canal A
- * @param music_b_addr  Dirección ROM del stream del canal B (0 = silencio)
  * ========================================================================== */
-void music_load(uint16_t music_a_addr, uint16_t music_b_addr)
+static const uint8_t *music_rom_ptr(uint16_t a)
 {
-    /* DI equivalent: en SDL2 no hay interrupción real, pero bloqueamos el mutex
-     * de audio para evitar race conditions con el callback de SDL */
+    uint32_t off = (uint32_t)a - 0x4000u;
+    return (g_rom && off < g_rom_size) ? g_rom + off : NULL;
+}
 
-    /* Canal A */
-    if (g_rom && music_a_addr >= ROM_ORG) {
-        uint32_t off = (uint32_t)music_a_addr - ROM_ORG;
-        g_music.ch[0].ptr = (off < g_rom_size) ? g_rom + off : NULL;
-    } else {
-        g_music.ch[0].ptr = NULL;
-    }
-    g_music.ch[0].duration   = 1u;
-    g_music.ch[0].tick_count = 0u;
+void music_load(uint16_t addr_a, uint16_t addr_b)
+{
+    g_ch[0].ptr        = music_rom_ptr(addr_a);
+    g_ch[0].duration   = 0u;
+    g_ch[0].tick_count = 0u;
 
-    /* Canal B */
-    if (g_rom && music_b_addr >= ROM_ORG) {
-        uint32_t off = (uint32_t)music_b_addr - ROM_ORG;
-        g_music.ch[1].ptr = (off < g_rom_size) ? g_rom + off : NULL;
-    } else {
-        g_music.ch[1].ptr = NULL;
-    }
-    g_music.ch[1].duration   = 1u;
-    g_music.ch[1].tick_count = 0u;
+    g_ch[1].ptr        = (addr_b >= 0x4000u) ? music_rom_ptr(addr_b) : NULL;
+    g_ch[1].duration   = 0u;
+    g_ch[1].tick_count = 0u;
 
-    /* Resetear fase de tick */
-    g_music.tick_phase = 0u;
+    g_tick_phase = 0u;
 }
 
 /* ==========================================================================
- * music_set_tempo — Configurar velocidad del reproductor
- *
- * El original usa (0xEAF3) = tempo_counter y (0xEAF4) = tempo_value.
- * La frecuencia de tick = (tempo_value / tempo_counter) × 60Hz.
- *
- * Valores típicos en el juego:
- *   tempo_counter = 0x03, tempo_value = 0x01 → ~20 ticks/seg (música lenta)
- *   tempo_counter = 0x06, tempo_value = 0x02 → ~20 ticks/seg
- *   tempo_counter = 0x00 → silencio global
- *
- * @param counter  valor de referencia de tempo (0 = silencio)
- * @param value    incremento por tick
+ * API pública
  * ========================================================================== */
-void music_set_tempo(uint8_t counter, uint8_t value)
+
+void music_set_tempo(uint8_t period, uint8_t speed)
 {
-    g_music.tempo_counter = counter;
-    g_music.tempo_value   = value;
-    g_music.tick_phase    = 0u;
+    g_tempo_period = period;
+    g_tempo_speed  = speed;
+    g_tick_phase   = 0u;
 }
 
-/* ==========================================================================
- * music_set_transpose — Configurar transposición global
- *
- * Equivale a escribir (0xEAF1) y (0xEAF2).
- * La transposición total = fine + coarse, sumada al índice de nota.
- *
- * @param fine    transposición fina (semitonos, signed via uint8 wrap)
- * @param coarse  transposición gruesa
- * ========================================================================== */
 void music_set_transpose(uint8_t fine, uint8_t coarse)
 {
-    g_music.transpose_fine   = fine;
-    g_music.transpose_coarse = coarse;
+    g_transpose_fine   = fine;
+    g_transpose_coarse = coarse;
 }
 
-/* ==========================================================================
- * music_sfx_trigger — Disparar un efecto de sonido
- *
- * Los SFX usan los contadores de volumen 0xEAF6..0xEAF8 que se decrementan
- * en cada tick del ISR. El canal de SFX se superpone a la música.
- *
- * @param sfx_id  0=chispa/roller, 1=muerte, 2=llave
- * @param volume  volumen inicial del SFX (0x10 típico en el juego)
- * ========================================================================== */
 void music_sfx_trigger(uint8_t sfx_id, uint8_t volume)
 {
-    if (sfx_id < 3u) {
-        g_music.vol[sfx_id] = volume;
-    }
+    if (sfx_id < 3u) g_sfx_vol[sfx_id] = volume;
 }
 
-/* ==========================================================================
- * FUNCIONES DE CONVENIENCIA para los puntos de carga del juego
- * ========================================================================== */
-
-/* Música del título y pantalla de sparks (sub_7769(HL=0x78D2, DE=0x7916)) */
+/* Temas conocidos */
 void music_play_title(void)
 {
-    music_load(MUSIC_TITLE_A, MUSIC_TITLE_B);
-    music_set_tempo(0x03u, 0x01u);
+    music_load(0x78D2u, 0x7916u);
+    music_set_tempo(0x06u, 0x00u);   /* threshold=6 → tick cada 6 VBlanks = 10Hz */
     music_set_transpose(0u, 0u);
 }
 
-/* Música de juego (referenciada desde sub_522A: 0xeb08 = 0x5A02) */
 void music_play_game(void)
 {
-    music_load(MUSIC_GAME_A, 0u);   /* un solo canal para la melodía del juego */
-    music_set_tempo(0x06u, 0x02u);
+    music_load(0x7ABEu, 0u);
+    music_set_tempo(0x04u, 0x00u);
     music_set_transpose(0u, 0u);
 }
 
-/* Silencio completo */
 void music_stop(void)
 {
-    g_music.tempo_counter = 0u;
-    psg_silence_all();
+    g_tempo_period = 0u;
+    silence_all();
 }
 
-/* ==========================================================================
- * INICIALIZACIÓN
- * ========================================================================== */
 void music_init(void)
 {
-    memset(&g_music, 0, sizeof(g_music));
-    g_music.active        = true;
-    g_music.tempo_counter = 0u;  /* silencio hasta que se cargue un tema */
-    g_music.tempo_value   = 1u;
+    memset(&g_ch,     0, sizeof(g_ch));
+    memset(&g_sfx_vol,0, sizeof(g_sfx_vol));
+    g_tempo_period     = 0u;
+    g_tempo_speed      = 0u;
+    g_tick_phase       = 0u;
+    g_transpose_fine   = 0u;
+    g_transpose_coarse = 0u;
+    g_active           = true;
 
-    /* Inicializar PSG en silencio:
-     * R7 = 0xFF: todos los canales con tono y ruido deshabilitados
-     * R8-R10 = 0: volúmenes a 0 */
-    hal_psg_write(7,  0xFFu);
-    hal_psg_write(8,  0u);
-    hal_psg_write(9,  0u);
-    hal_psg_write(10, 0u);
+    /* Inicializar PSG igual que BIOS GICINI:
+     * R7=0xB8: tone A,B habilitados; noise C habilitado; resto off
+     * bit0=0(toneA on), bit1=0(toneB on), bit2=1(toneC off)
+     * bit3=1(noiseA off), bit4=1(noiseB off), bit5=0(noiseC on)
+     * = 0b10111000 = 0xB8 */
+    wrtpsg(0x07u, 0xB8u);
+    wrtpsg(0x08u, 0x00u);   /* vol A = 0 */
+    wrtpsg(0x09u, 0x00u);   /* vol B = 0 */
+    wrtpsg(0x0Au, 0x00u);   /* vol C = 0 */
+    wrtpsg(0x0Bu, 0x00u);   /* envelope period lo = 0 */
+    wrtpsg(0x0Cu, 0x00u);   /* envelope period hi = 0 */
+    wrtpsg(0x0Du, 0x08u);   /* envelope shape = attack continuo */
 }

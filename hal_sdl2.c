@@ -90,9 +90,16 @@ static SDL_Texture  *texture  = NULL;  /* MSX_W × MSX_H, RGBA8888 */
 /* --- PSG AY-3-8910 --- */
 typedef struct {
     uint16_t tone_period;   /* registros R0/R1, R2/R3, R4/R5 */
-    uint8_t  volume;        /* R8, R9, R10 — bits[3:0] = vol, bit4 = env */
+    uint8_t  volume;        /* volumen efectivo (0-15) */
+    bool     use_env;       /* true → usa envelope generator */
     uint32_t phase;         /* fase del oscilador (acumulador) */
 } PsgChannel;
+
+/* Envelope generator state */
+static uint16_t psg_env_period;   /* R11 | (R12 << 8) */
+static uint8_t  psg_env_shape;    /* R13: 0x08=attack, 0x00=sawdown, etc. */
+static uint32_t psg_env_phase;    /* fase del envelope (0..65535) */
+static uint8_t  psg_env_vol;      /* volumen actual del envelope (0-15) */
 
 static PsgChannel psg_ch[PSG_CHANNELS];
 static uint8_t    psg_noise_period;  /* R6  */
@@ -212,7 +219,11 @@ bool hal_init(bool pal_timing)
     /* PSG */
     memset(psg_ch,   0, sizeof(psg_ch));
     memset(psg_regs, 0, sizeof(psg_regs));
-    psg_mixer = 0xFF; /* todo silenciado */
+    psg_mixer      = 0xFFu; /* todo silenciado */
+    psg_env_period = 0u;
+    psg_env_shape  = 0u;
+    psg_env_phase  = 0u;
+    psg_env_vol    = 0u;
 
     return true;
 }
@@ -585,9 +596,32 @@ void hal_psg_write(uint8_t reg, uint8_t val)
             psg_mixer = val;
             break;
         /* Volúmenes (R8, R9, R10) — bits[3:0], bit4=env (no implementado) */
-        case  8: psg_ch[0].volume = val & 0x0Fu; break;
-        case  9: psg_ch[1].volume = val & 0x0Fu; break;
-        case 10: psg_ch[2].volume = val & 0x0Fu; break;
+        case  8:
+            /* bit4=1: envelope mode → use max volume; bit4=0: fixed volume */
+            psg_ch[0].volume    = (val & 0x10u) ? 0x0Fu : (val & 0x0Fu);
+            psg_ch[0].use_env   = (val & 0x10u) != 0u;
+            break;
+        case  9:
+            psg_ch[1].volume    = (val & 0x10u) ? 0x0Fu : (val & 0x0Fu);
+            psg_ch[1].use_env   = (val & 0x10u) != 0u;
+            break;
+        case 10:
+            psg_ch[2].volume    = (val & 0x10u) ? 0x0Fu : (val & 0x0Fu);
+            psg_ch[2].use_env   = (val & 0x10u) != 0u;
+            break;
+        case 11:
+            psg_env_period = (uint16_t)((psg_regs[11]) | ((uint16_t)psg_regs[12] << 8));
+            psg_env_phase  = 0u;
+            break;
+        case 12:
+            psg_env_period = (uint16_t)((psg_regs[11]) | ((uint16_t)psg_regs[12] << 8));
+            psg_env_phase  = 0u;
+            break;
+        case 13:
+            psg_env_shape  = val;
+            psg_env_phase  = 0u;
+            psg_env_vol    = (val & 0x04u) ? 0u : 0x0Fu; /* attack starts at 0 or 15 */
+            break;
         default: break;
     }
 
@@ -634,8 +668,37 @@ static void psg_audio_callback(void *userdata, uint8_t *stream, int len)
     uint32_t noise_inc = psg_noise_period ? (uint32_t)(
         (PSG_CLOCK / (16.0 * psg_noise_period)) / AUDIO_FREQ * 65536.0) : 0;
 
+    /* Incremento de envelope */
+    uint32_t env_inc = 0u;
+    if (psg_env_period > 0u) {
+        double env_freq = PSG_CLOCK / (256.0 * psg_env_period);
+        env_inc = (uint32_t)(env_freq / AUDIO_FREQ * 65536.0);
+    }
+
     for (int i = 0; i < nsamples; i++) {
         int32_t mixed = 0;
+
+        /* Actualizar envelope generator */
+        if (env_inc > 0u) {
+            uint32_t prev_ep = psg_env_phase;
+            psg_env_phase += env_inc;
+            if (psg_env_phase < prev_ep) {
+                /* overflow: un ciclo de envelope completo */
+                bool attack  = (psg_env_shape & 0x04u) != 0u;
+                bool alternate = (psg_env_shape & 0x02u) != 0u;
+                bool hold    = (psg_env_shape & 0x01u) != 0u;
+                if (hold) {
+                    psg_env_vol = attack ? 0x0Fu : 0x00u;
+                } else if (alternate) {
+                    /* invertir dirección */
+                    psg_env_shape ^= 0x04u;
+                }
+            }
+            /* Volumen del envelope en este sample */
+            bool env_attack = (psg_env_shape & 0x04u) != 0u;
+            uint8_t ep_vol = (uint8_t)((psg_env_phase >> 12) & 0x0Fu);
+            psg_env_vol = env_attack ? ep_vol : (uint8_t)(0x0Fu - ep_vol);
+        }
 
         /* Actualizar LFSR de ruido */
         psg_noise_phase += noise_inc;
@@ -659,7 +722,8 @@ static void psg_audio_callback(void *userdata, uint8_t *stream, int len)
             bool output = (tone_en  ? tone_out  : true)
                         & (noise_en ? noise_out : true);
 
-            uint16_t vol = vol_table[psg_ch[c].volume & 0x0Fu];
+            uint8_t  eff_vol = psg_ch[c].use_env ? psg_env_vol : psg_ch[c].volume;
+            uint16_t vol     = vol_table[eff_vol & 0x0Fu];
             mixed += output ? (int32_t)vol : -(int32_t)vol;
         }
 

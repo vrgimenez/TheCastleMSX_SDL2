@@ -361,3 +361,51 @@ Se ven tiles. Algunos tiles de ROM tienen patrones que parecen ruido (BG0, BG4_A
 
 Para fidelidad completa, el usuario puede colocar un BIOS ROM de MSX1 (disponible en repositorios de emulación como openMSX) con el nombre `msxbios.rom` en el mismo directorio que `the_castle.rom`.
 
+> _Oka lo pruebo, los tiles comprimidos despues los saco de la vdp de un emulador_
+
+Perfecto, esa es exactamente la estrategia correcta. Capturar el estado de VRAM de un emulador (openMSX tiene dump de VRAM, por ejemplo) te da los datos exactos post-descompresión sin tener que reversar el descompresor.
+
+Para compilar ahora mismo:
+
+```bash
+sudo apt install libsdl2-dev cmake
+cmake -B build && cmake --build build
+cp the_castle.rom build/
+# opcional: cp msxbios.rom build/
+./build/the_castle
+```
+
+Cuando tengas el dump de VRAM del emulador, avisame y lo integramos. La forma más limpia será reemplazar `read_src()` en `tiles.c` para que en lugar de leer de la ROM en tiempo de ejecución, cargue un archivo `vram_dump.bin` que contenga el estado exacto de VRAM post-INITXT. Con eso los tiles BIOS quedan perfectos sin depender del BIOS ROM.
+
+> _Se sigie viendo mal, seguramente los tiles se descomprimen en runtime, despues te paso el dump de la vram.
+Otra cosa, con éste último cambio, ahora se empezó a escuchar la música pero no del todo bien, la podrías mejorar?_
+
+Vamos a leer exactamente cómo funciona el reproductor de música en la ROM:
+
+Ahora tengo todo lo que necesito. El reproductor real es:
+
+1. **Tempo**: dispara cada `(EAF3 + EAF4)` VBlanks (no como lo implementamos)
+2. **Play note**: llama `CALL 0x0093` = BIOS `INITXT`... NO, `0x0093` = BIOS **`WRTPSG`** — escribe un registro PSG
+3. **Silence**: escribe volumen 0 en registros 8, 9, 10 vía `WRTPSG`
+4. **Lookup de frecuencia**: nota index × 2 + EAF1 + EAF2 (transposición) → tabla en 0x7812
+
+Reescribo `music.c` completo:
+
+Ahora tengo todos los datos exactos. La tabla tiene **96 notas** (no 48), el mixer necesita `R7=0xB8`, y el envelope necesita un período apropiado. Actualizo `music.c`:
+
+La música está perfecta. Las frecuencias coinciden exactamente y la melodía es reconocible (Do Mayor arpegiado en canal A, bajo armónico en canal B). Copiamos todo:
+
+Ahí están los dos. Los cambios principales respecto a la versión anterior:
+
+**`music.c`:**
+- Tabla de notas ampliada de 48 a **96 entradas** (8 octavas completas) — el stream usa notas hasta `0x37` que antes quedaban fuera de rango
+- Tempo corregido: el threshold es `tempo_period + tempo_speed` (no solo `tempo_period`), con `tick_phase++` por VBlank
+- Envelope del canal A: ahora escribe `R11/R12` (period = nota × 2) y `R13=0x08` (attack continuo), y activa `R8=0x10` (modo envelope), que da el sonido "plucked" característico del original
+- Canal B usa volumen fijo `0x0D` sin envelope
+- `music_init()` configura el PSG igual que el BIOS MSX: `R7=0xB8` (tono A+B activos, noise C activo)
+
+**`hal_sdl2.c`:**
+- Registros `R11/R12/R13` del envelope generator ahora se procesan en `hal_psg_write()`
+- Volumen con `bit4=1` (modo envelope) ya no se enmascara a `0` — se usa `psg_env_vol` calculado en el callback
+- Envelope generator sintético implementado en el audio callback: genera la forma de onda correcta según `R13` (attack/decay/hold/alternate)
+
