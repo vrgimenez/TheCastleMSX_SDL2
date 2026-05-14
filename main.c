@@ -280,6 +280,7 @@ int main(int argc, char *argv[])
     }
 
     /* --- 3. Cargar tiles ROM → VRAM --- */
+    tiles_load_bios_rom("msxbios.rom");   /* opcional: mejora fidelidad */
     tiles_load_from_rom(rom_buf, rom_size);
 
     /* --- 4. Inicializar subsistemas --- */
