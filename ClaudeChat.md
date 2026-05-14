@@ -249,3 +249,46 @@ Lo que encontré en el análisis de la música:
 
 El próximo paso lógico sería el **scroll/cámara** (`sub_623C`) — el último sistema principal sin implementar. ¿Seguimos?
 
+> _Si_
+
+Vamos a leer sub_623C y todo su árbol:Tengo todo. Es un sistema complejo pero claro. Escribo la traducción completa:Compila limpio con los 10 módulos. El proyecto completo en números:
+
+```
+12 archivos  |  ~280KB de código C  |  0 errores de compilación
+```
+
+**Lo que encontré en el análisis de la cámara:**
+
+El sistema de "cámara" no es un scroll suave — es un **sistema de triggers por tile**. Cuando el jugador pisa una celda cuyo byte en `g_tilemap` tiene el bit 2 activo (`& 0x04`), `sub_5B96` busca en la tabla de puertas de salida (`0xE3D6`) la entrada que coincide con `(player_col, player_row)` y despacha una acción según `IX+1`.
+
+Hay 8 tipos de trigger distintos identificados. Los más importantes son `0x20` (subir de sala), `0x21` (sala lateral por tabla), `0x23` y `0x24` (llaves que cargan música específica con streams en `0x79B7`/`0x79DE` y `0x7964`/`0x7993`). Los triggers `0x27+` son coleccionables que disparan SFX.
+
+**`sub_623C` hace tres cosas en orden fijo:**
+1. Decrementa el timer de fade del sprite de muerte (`0xEAF9`) — cuando llega a 0 borra el sprite escribiendo tile `0x3F` en la name table
+2. Solo cada 16 frames (`g_state_flags & 0x0F == 0`): decrementa los timers de chispa A y B, y cuando llegan a 0 recarga la música del título (`0x78D2`/`0x7916`)
+3. Renderiza el mapa visible (10×10 tiles de `g_tilemap[]`)
+
+**El render del mapa** es directo: lee `g_tilemap[row*30+col]` y si el tile != 0 pone color `0x07` (gris claro), si es 0 pone `0x04` (cyan). Después actualiza el color del número de sala en el HUD usando la codificación BCD de `g_room_x`.
+
+**`render_background()`** es el que gestiona la lógica de velocidad del jugador según los bloques: si el jugador está montado sobre un bloque lento el speed es `0x01` y la música transpone `+0x0C` semitonos (sube un tono), si el bloque es rápido el speed es `0x30` y transpone `+0x07`. Esto es lo que crea el efecto de "urgencia" musical cuando el jugador está sobre rollers que se mueven rápido.
+
+**Estado del port con todos los sistemas implementados:**
+
+| Sistema | Estado |
+|---|---|
+| HAL SDL2 (VDP, PSG, input, vsync) | ✅ |
+| Tiles ROM→VRAM | ✅ |
+| Loop principal | ✅ |
+| Jugador + colisión | ✅ |
+| Enemigos (roller, bat) | ✅ |
+| Partículas / chispas | ✅ |
+| Puertas, switches, bloques, pinchos | ✅ |
+| Coleccionables y llaves | ✅ |
+| Carga de salas + scripts | ✅ |
+| Música PSG (2 canales + SFX) | ✅ |
+| Cámara / triggers / render de mapa | ✅ |
+| Pantalla de título (`sub_4A4A`) | 🚧 stub |
+| Build system | ✅ |
+
+Lo que queda es `sub_4A4A` — la pantalla de título. ¿La decodificamos?
+
