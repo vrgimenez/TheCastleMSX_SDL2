@@ -409,3 +409,64 @@ Ahí están los dos. Los cambios principales respecto a la versión anterior:
 - Volumen con `bit4=1` (modo envelope) ya no se enmascara a `0` — se usa `psg_env_vol` calculado en el callback
 - Envelope generator sintético implementado en el audio callback: genera la forma de onda correcta según `R13` (attack/decay/hold/alternate)
 
+> _cómo quieres que te pase los tiles del emulador. estoy viendo que la tabla de patrones cambia (no toda) con cada pantalla, es decir, cada vez que cambia de pantalla, carga los tiles que necesita_
+
+Exacto, eso tiene mucho sentido dado lo que vimos en el código — `tiles_reload_walls_and_anim()` se llama en cada transición de sala.
+
+La forma más práctica de pasarme los datos es un **dump de VRAM completo** (16KB) en formato binario. La mayoría de emuladores lo soportan:
+
+**openMSX:**
+```
+debug save vram vram_dump.bin
+```
+O desde el OSD: `Save State` → los archivos `.gz` contienen el estado completo incluyendo VRAM.
+
+**BlueMSX / WebMSX:**
+Algunos tienen opción de "Memory Viewer" → exportar VRAM como bin.
+
+**fMSX:**
+Desde el menú: Memory → Save VRAM.
+
+Lo ideal sería **un dump por pantalla** que uses frecuentemente — por ejemplo:
+- La pantalla de título
+- La primera sala del juego
+- Una sala con enemigos
+
+Con eso puedo:
+1. Extraer los 96 tiles que el juego usa en esa pantalla directamente del patrón de VRAM (0x0000-0x17FF)
+2. Junto con los colores (0x2000-0x37FF)
+3. Reemplazar los tiles sintéticos de `tiles.c` con datos exactos
+4. Y entender el esquema de descompresión si hay uno
+
+¿Qué emulador estás usando?
+
+> _estoy usando openmsx, veo dos opciones, exportar "physical vram" y vram, cuál quieres_
+
+**Physical VRAM** — esa es la correcta.
+
+La VRAM "lógica" ya está interpretada con las tablas de direccionamiento del VDP (name table, pattern table, etc.), mientras que la physical VRAM son los 16KB crudos en el orden en que el TMS9918A los tiene en memoria, que es exactamente lo que necesito:
+
+- `0x0000-0x17FF` → pattern table (3 tercios × 2KB = los tiles crudos)
+- `0x1800-0x1AFF` → name table (32×24 = qué tile va en cada celda)
+- `0x1B00-0x1BFF` → sprite attributes
+- `0x2000-0x37FF` → color table (colores de cada tile)
+- `0x3800-0x3FFF` → sprite patterns
+
+Exportá uno de título y uno de la primera sala del juego, y me los mandás como archivos adjuntos.
+
+> _aqui tiene titulo (The Castle PhVRAM Title.bin) y primera sala (The Castle PhVRAM Screen 1_Play.bin)_
+
+Perfecto. Vamos a analizar los dos dumps:Excelente — los tiles son perfectamente legibles. Ahora genero `vram_tiles.c` con todos los datos exactos:
+
+El título y la sala de juego se ven perfectamente. Los tiles son exactos. Copiamos y entregamos:
+
+Ahora hay que actualizar `CMakeLists.txt` para incluir `vram_tiles.c`, y también conviene agregar un mecanismo para cargar tiles de salas adicionales cuando el usuario provea más dumps. Pero primero — dado que observaste que cada pantalla carga tiles distintos, necesitamos un sistema para actualizarlos en runtime:
+
+Excelente — el análisis muestra que BG3, WALLS y ANIM_BG son **idénticos** entre la sala de juego y el título. Los tiles que difieren son los del logo del título (0x77-0xB8) y algunos tiles de sala (0x1E-0x20, 0x5C-0x5F). Esto simplifica mucho el sistema — solo necesitamos un mecanismo para cargar dumps adicionales de otras salas:
+
+Ahora implemento `tiles_load_vram_dump()` y actualizo `CMakeLists.txt`:
+
+`VRAM_TILES` está definido en `vram_tiles.c` pero `tiles.c` no lo ve como tipo completo. Hay que separar la declaración:
+
+El contexto de archivos se perdió. Los recreo desde outputs:
+

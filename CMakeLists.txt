@@ -16,6 +16,7 @@ option(ENABLE_ASAN "Activar AddressSanitizer (solo desarrollo)" OFF)
 set(GAME_SOURCES
     main.c          # Punto de entrada: carga ROM, inicializa HAL y subsistemas
     the_castle.c    # Loop principal, jugador, movimiento, puntuación
+#   vram_tiles.c    # Datos de tiles extraídos de Physical VRAM dump (openMSX)
     tiles.c         # Carga de tiles ROM → VRAM (sub_4D52 / sub_64AB / sub_6CD9)
     enemies.c       # IA de enemigos: roller, bat, sprite draw (sub_6F5C..sub_719D)
     particles.c     # Chispas, partículas, trampa murciélago (sub_61F5 / sub_7279)

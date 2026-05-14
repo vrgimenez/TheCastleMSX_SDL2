@@ -1,25 +1,24 @@
 /*
- * THE CASTLE — Cargador de tiles (desde dump de VRAM real)
- * =========================================================
- * Todos los tiles provienen de dumps de Physical VRAM exportados con openMSX.
- * Esto garantiza pixel-perfect accuracy respecto al hardware original.
+ * THE CASTLE — Tiles extraídos del VRAM real (openMSX dump)
+ * Generado desde: Physical VRAM dump de openMSX
+ * Contiene: pantalla de título + primera sala de juego
  *
- * Estrategia:
- *   - tiles_load_from_rom(): copia VRAM_TILES[] directamente al VDP
- *   - Para tiles animados: cicla entre variantes en VRAM_TILES[]
- *   - Si hay tiles adicionales (otras salas): se pueden agregar más dumps
+ * 154 tiles únicos, rango 0x00..0xB8
+ *
+ * Formato por tile (16 bytes interleaved):
+ *   byte[2r]   = patrón fila r (bits = pixels, 1=ink, 0=paper)
+ *   byte[2r+1] = color fila r  (hi nibble=ink, lo nibble=paper)
+ *
+ * Colores TMS9918A:
+ *   0=transparent, 1=black, 2=med.green, 3=lt.green, 4=dk.blue,
+ *   5=lt.blue, 6=dk.red, 7=cyan, 8=med.red, 9=lt.red,
+ *   A=dk.yellow, B=lt.yellow, C=dk.green, D=magenta, E=grey, F=white
  */
 
 #include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include <stdio.h>
 #include "hal.h"
 #include "game.h"
 
-/* ==========================================================================
- * VRAM_TILES — datos exactos de los tiles (del dump de openMSX)
- * ========================================================================== */
 /* Índices VRAM de tiles del juego */
 #define VTILE_BLANK        0x00u
 #define VTILE_DOOR         0x0Du
@@ -219,120 +218,18 @@ static const uint8_t VRAM_TILES[185][16] = {
 };
 
 /* Escribir un tile al VDP desde la tabla */
-
-/* ==========================================================================
- * CONSTANTES DE LAYOUT (índices VRAM, verificados contra dump real)
- * ========================================================================== */
-#define IDX_DOOR      0x0Du
-#define IDX_BG3       0x0Eu   /* 28 tiles */
-#define IDX_BG0       0x2Au   /* 28 tiles */
-#define IDX_KEY       0x46u
-#define IDX_ANIM_BG   0x47u   /* 10 tiles */
-#define IDX_BG4_A     0x51u   /* 4 tiles  */
-#define IDX_BG4_B     0x55u   /* 2 tiles  */
-#define IDX_BG4_C     0x57u   /* 2 tiles  */
-#define IDX_WALLS     0x59u   /* 26 tiles */
-
-#define VRAM_PAT_BASE   0x0000u
-#define VRAM_COL_BASE   0x2000u
-#define VRAM_NAME_BASE  0x1800u
-#define VRAM_THIRD_SIZE 0x0800u
-#define VRAM_N_TILES    (sizeof(VRAM_TILES)/sizeof(VRAM_TILES[0]))
-
-/* ==========================================================================
- * write_tile_to_vdp — Copiar un tile de VRAM_TILES[] al VDP
- * third: 0/1/2 para un tercio específico, -1 para los tres
- * ========================================================================== */
-static void write_tile_to_vdp(uint8_t src_idx, uint8_t dst_idx, int third)
-{
-    if (src_idx >= (uint8_t)VRAM_N_TILES) return;
-
+static void vram_write_tile_from_table(uint8_t tile_idx,
+                                        uint8_t vram_idx,
+                                        int third) {
+    if (tile_idx >= 185u) return;
     int t0 = (third < 0) ? 0 : third;
     int t1 = (third < 0) ? 3 : third + 1;
-
     for (int t = t0; t < t1; t++) {
-        uint16_t pat = (uint16_t)(VRAM_PAT_BASE
-                       + (uint16_t)t * VRAM_THIRD_SIZE
-                       + (uint16_t)dst_idx * 8u);
-        uint16_t col = (uint16_t)(VRAM_COL_BASE
-                       + (uint16_t)t * VRAM_THIRD_SIZE
-                       + (uint16_t)dst_idx * 8u);
+        uint16_t pat = (uint16_t)(0x0000u + (uint16_t)t*0x0800u + (uint16_t)vram_idx*8u);
+        uint16_t col = (uint16_t)(0x2000u + (uint16_t)t*0x0800u + (uint16_t)vram_idx*8u);
         for (uint8_t r = 0u; r < 8u; r++) {
-            hal_vdp_write_vram((uint16_t)(pat + r), VRAM_TILES[src_idx][r * 2u]);
-            hal_vdp_write_vram((uint16_t)(col + r), VRAM_TILES[src_idx][r * 2u + 1u]);
+            hal_vdp_write_vram((uint16_t)(pat+r), VRAM_TILES[tile_idx][r*2u]);
+            hal_vdp_write_vram((uint16_t)(col+r), VRAM_TILES[tile_idx][r*2u+1u]);
         }
     }
 }
-
-/* ==========================================================================
- * tiles_load_from_rom() — Carga inicial de todos los tiles al VDP
- * Copia directamente desde VRAM_TILES[] (datos reales del hardware).
- * El parámetro rom_data se mantiene por compatibilidad con game.h pero
- * se ignora para la carga de tiles (se usa para música/scripts).
- * ========================================================================== */
-void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
-{
-    g_rom      = rom_data;
-    g_rom_size = rom_size;
-
-    /* Limpiar VRAM */
-    hal_vdp_fill_vram(VRAM_PAT_BASE,  0x00u, 0x1800u);
-    hal_vdp_fill_vram(VRAM_COL_BASE,  0x00u, 0x1800u);
-    hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, 768u);
-
-    /* Copiar todos los tiles conocidos al VDP (src=dst=índice) */
-    for (uint8_t i = 0u; i < (uint8_t)VRAM_N_TILES; i++) {
-        write_tile_to_vdp(i, i, -1);
-    }
-}
-
-/* ==========================================================================
- * tiles_reload_walls_and_anim() — Recargar WALLS + ANIM_BG entre salas
- * Los tiles ya están en VRAM_TILES[], solo reescribir al VDP.
- * ========================================================================== */
-void tiles_reload_walls_and_anim(void)
-{
-    /* WALLS: 28 tiles desde IDX_WALLS */
-    for (uint8_t i = 0u; i < 28u; i++) {
-        uint8_t idx = (uint8_t)(IDX_WALLS + i);
-        if (idx < (uint8_t)VRAM_N_TILES)
-            write_tile_to_vdp(idx, idx, -1);
-    }
-    /* ANIM_BG: 10 tiles desde IDX_ANIM_BG */
-    for (uint8_t i = 0u; i < 10u; i++) {
-        uint8_t idx = (uint8_t)(IDX_ANIM_BG + i);
-        if (idx < (uint8_t)VRAM_N_TILES)
-            write_tile_to_vdp(idx, idx, -1);
-    }
-}
-
-/* ==========================================================================
- * tiles_animate() — Rotar tile animado cada 4 frames
- * Cicla entre los 10 tiles de ANIM_BG (0x47..0x50).
- * ========================================================================== */
-void tiles_animate(uint8_t frame_counter)
-{
-    if ((frame_counter & 0x03u) != 0u) return;
-    uint8_t slot     = (uint8_t)((frame_counter >> 2u) % 10u);
-    uint8_t next_src = (uint8_t)(IDX_ANIM_BG + ((slot + 1u) % 10u));
-    uint8_t dst      = (uint8_t)(IDX_ANIM_BG + slot);
-    if (next_src < (uint8_t)VRAM_N_TILES)
-        write_tile_to_vdp(next_src, dst, -1);
-}
-
-/* ==========================================================================
- * BIOS ROM (no necesaria con datos reales, mantenida por compatibilidad)
- * ========================================================================== */
-void tiles_load_bios_rom(const char *path) { (void)path; }
-
-/* ==========================================================================
- * Funciones de índice VRAM
- * ========================================================================== */
-uint8_t tiles_vram_idx_blank(void)        { return 0x00u; }
-uint8_t tiles_vram_idx_door(void)         { return IDX_DOOR; }
-uint8_t tiles_vram_idx_bg3(uint8_t n)     { return (uint8_t)(IDX_BG3    + n); }
-uint8_t tiles_vram_idx_key(void)          { return IDX_KEY; }
-uint8_t tiles_vram_idx_anim_bg(uint8_t n) { return (uint8_t)(IDX_ANIM_BG + n); }
-uint8_t tiles_vram_idx_bg4(uint8_t n)     { return (uint8_t)(IDX_BG4_A  + n); }
-uint8_t tiles_vram_idx_wall(uint8_t n)    { return (uint8_t)(IDX_WALLS   + n); }
-uint8_t tiles_vram_idx_space(void)        { return 0x3Fu; }
