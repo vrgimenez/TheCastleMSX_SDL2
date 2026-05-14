@@ -226,3 +226,26 @@ La cuarta es la **tabla de salas** en `0x5748` con entradas de 5 bytes que mapea
 
 Para compilar agregá `room.c` a tu `CMakeLists.txt` en la lista de `GAME_SOURCES`. El próximo paso natural sería el scroll/cámara (`sub_623C`) o la música — ¿cuál preferís?
 
+> _Sigamos con la musica_
+
+Vamos a leer todo el árbol de sub_7769:Tengo todo. El formato está completamente claro. Ahora escribo el reproductor:Cero errores, todo linkeado. Para compilar en Linux ahora son 9 archivos `.c`:
+
+```bash
+gcc -std=c99 -O2 \
+    main.c the_castle.c tiles.c enemies.c particles.c \
+    doors.c room.c music.c hal_sdl2.c \
+    $(sdl2-config --cflags --libs) -lm -o the_castle
+```
+
+Lo que encontré en el análisis de la música:
+
+**El reproductor es una ISR real.** El código en `0x75D4` se ejecuta en cada VBlank del TMS9918A y no en el game loop principal — por eso `music_isr_tick()` va dentro de `hal_wait_vsync()` y no en el loop de juego.
+
+**Dos capas de audio simultáneas.** La música propiamente dicha (canales A y B del PSG) y los SFX (efectos de chispa/muerte/llave) comparten el mismo PSG pero por mecanismos distintos: la música usa los registros de tono normales, los SFX escriben directamente `R7` (mixer) con modos especiales que mezclan ruido con tono (`0x98`, `0xB8`). Cuando hay un SFX activo, `psg_update_sfx()` toma el control del canal C y del mixer, dejando que la música siga en A y B.
+
+**El formato de nota es compacto.** Un byte codifica nota + flag de duración. Si el bit 7 está activo, el byte siguiente es la duración en ticks, sino se reutiliza la duración anterior. Esto permite streams muy compactos para melodías con mucha repetición rítmica. Los sentinels `0xFF` (fin) y `0xFE ptr_lo ptr_hi` (loop) permiten bucles sin duplicar datos.
+
+**La tabla de frecuencias está en ROM** (`0x7812`, 48 entradas × 2 bytes). Son los períodos exactos del AY-3-8910 con reloj de 1.789773 MHz, cubriendo 4 octavas cromáticas desde C1 (32.7 Hz) hasta B4 (493 Hz). La nota `0x60` es silencio — no tiene entrada en la tabla.
+
+El próximo paso lógico sería el **scroll/cámara** (`sub_623C`) — el último sistema principal sin implementar. ¿Seguimos?
+
