@@ -177,35 +177,22 @@ static void main_loop(void)
     bool running = true;
 
     while (running) {
-        /* --- Título / intro --- */
-      //music_play_title();
-        g_intro_active = 1;
-        g_state_flags  = 0;
-
-        /* Loop de intro: mostrar pantalla de título hasta que el jugador
-         * pulse fire o el sistema pida salir */
-        while (g_intro_active) {
-            if (!hal_poll_events()) {
-                running = false;
-                return;
-            }
-
-            title_screen();
-            tiles_animate(g_state_flags);
-            update_doors();
-            update_enemies();
-            update_particles();
-
-            camera_update();
-            g_state_flags++;
-            hal_wait_vsync();
-
-            if (hal_key_pressed()) {
-                g_intro_active = 0;
-            }
+        /* --- Título / demo ---
+         * title_screen() es auto-contenida: maneja 3 ciclos en silencio,
+         * luego modo demo con música de juego. Retorna solo cuando el
+         * jugador pulsa fire. */
+        if (!hal_poll_events()) {
+            running = false;
+            return;
         }
+        g_state_flags = 0;
+        title_screen();
 
         /* --- Juego --- */
+        if (!hal_poll_events()) {
+            running = false;
+            return;
+        }
         game_reset_level();
         music_play_game();
         enemies_init();

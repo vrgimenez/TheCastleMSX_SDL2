@@ -43,7 +43,7 @@
  *   0x56AB  — String de demo
  *   0x56B5  — String adicional
  *   0x56B8  — String final de créditos
- *
+*
  * RAM USADA
  * ---------
  *   0xEAE4  g_intro_active  — 1 = intro activa, 0 = terminar intro
@@ -556,7 +556,9 @@ static void reset_aux_state(void)
     extern uint8_t g_music_transpose_coarse;
     g_music_transpose_fine   = 0u;
     g_music_transpose_coarse = 0u;
-    music_set_tempo(0u, 0u);   /* silencio hasta cargar música del juego */
+    /* sub_4029 sólo pone a cero las variables de transposición/tempo-fine
+     * (0xEAF1/F2/F4/F5). No detiene el reproductor — la música cargada
+     * justo antes sigue sonando. No llamar music_set_tempo(0,0) aquí. */
 }
 
 /* ==========================================================================
@@ -607,10 +609,9 @@ restart:
     /* Delegamos a tiles.c — los 3 tercios se cargan igual que en tiles_load_from_rom */
     tiles_reload_walls_and_anim();
 
-    /* Música del título */
-    music_play_title();
-
-    /* Bucle de 3 ciclos */
+    /* Bucle de 3 ciclos — los primeros 3 ciclos son en silencio.
+     * El modo demo (restart después de 3 ciclos) usa la música de juego
+     * que se carga al final del bucle, antes del goto restart. */
     for (uint8_t cycle = 0u; cycle < DEMO_CYCLES; cycle++) {
 
         /* Fase 1: logo animado */
@@ -629,15 +630,11 @@ restart:
         curtain_wipe();
     }
 
-    /* 3 ciclos completados sin input: resetear nivel y empezar juego */
+    /* 3 ciclos completados sin input: resetear nivel y arrancar música demo.
+     * El disasm almacena 0x7ABE *directamente* como puntero de stream (4AA8).
+     * music_play_game() ya hace music_load(0x7ABE) + set_tempo correcto. */
     game_reset_level();
-
-    /* Cargar música del juego (ROM 0x7ABE = inicio del stream de juego) */
-    {
-        uint16_t music_ptr = (uint16_t)(rom_rb(ROM_GAME_MUSIC)
-                             | ((uint16_t)rom_rb((uint16_t)(ROM_GAME_MUSIC + 1u)) << 8));
-        music_load(music_ptr, 0u);
-    }
+    music_play_game();
 
     g_player_speed = 0x70u;
     reset_aux_state();
