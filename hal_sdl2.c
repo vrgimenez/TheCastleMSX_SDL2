@@ -238,6 +238,17 @@ void hal_quit(void)
     SDL_Quit();
 }
 
+/* Flag persistente de quit — una vez activado, nunca se desactiva */
+static bool g_quit_requested = false;
+
+/* ==========================================================================
+ * CONSULTA DE ESTADO — sin consumir eventos
+ * ========================================================================== */
+bool hal_is_running(void)
+{
+    return !g_quit_requested;
+}
+
 /* ==========================================================================
  * PUMP DE EVENTOS — llamar una vez por frame
  * Retorna false si el usuario cerró la ventana.
@@ -246,10 +257,11 @@ bool hal_poll_events(void)
 {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_QUIT) return false;
+        if (ev.type == SDL_QUIT) g_quit_requested = true;
         if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE)
-            return false;
+            g_quit_requested = true;
     }
+    if (g_quit_requested) return false;
 
     /* Actualizar estado de joystick desde el teclado:
      *
@@ -788,6 +800,7 @@ void hal_delay(uint8_t frames)
 {
     for (int i = 0; i < frames; i++) {
         hal_poll_events();
+        if (!hal_is_running()) return;
         hal_wait_vsync();
     }
 }

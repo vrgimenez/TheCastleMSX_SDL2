@@ -154,7 +154,102 @@ static uint8_t *load_rom(const char *path, uint32_t *size_out)
 }
 
 /* ==========================================================================
- * LOOP PRINCIPAL
+ * GAME FRAME (sub_4064) — Una iteración del bucle de juego por frame
+ *
+ * Estructura fiel al código original en 0x4064:
+ *
+ *   sub_4064:
+ *     CALL sub_5D5D         → check title_mode flag (g_state_flags bit 0)
+ *     [if not title mode: reset anim_frame, facing]
+ *     CALL sub_6383         → reset keyframe queue
+ *     LD A,1 → (0xEAE8)    → enemies_active = 1
+ *     CALL sub_5128         → music tick + VSync
+ *     XOR A → (0xEAE8)     → enemies_active = 0
+ *     CALL 0x62D8           → render background + triggers
+ *     CALL sub_5B96         → scroll update
+ *     check g_restart_flag  → if set, return
+ *     CALL sub_442D         → update doors
+ *     CALL sub_434A         → update collectibles
+ *     CALL sub_40BB         → update player
+ *     CALL sub_6F5C         → update enemies
+ *     CALL sub_4406         → update traps
+ *     CALL sub_438D         → check key pickup
+ *     CALL sub_4499         → check door exit
+ *     CALL sub_5A2D         → update HUD
+ *     check g_game_over     → if set, return
+ *     check g_room_exit     → CALL sub_5053 → if NZ, return
+ *     g_state_flags++
+ *     CALL 0x623C           → camera/particles update
+ *     JR sub_4064
+ * ========================================================================== */
+void game_frame(void)
+{
+    /* sub_5D5D: check title/demo mode bit */
+    bool title_mode = (g_state_flags & 0x01u) != 0;
+    if (!title_mode) {
+        g_anim_frame = 0;
+        g_facing     = 0;
+    }
+
+    /* sub_6383: reset keyframe queue */
+    memset(g_keyframe_queue, 0xFFu, sizeof(g_keyframe_queue));
+
+    /* enemies_active toggle around poll/music (sub_5128) */
+    g_enemies_active = 1;
+    if (!hal_poll_events()) { g_game_over = 1; return; }
+    g_enemies_active = 0;
+
+    /* sub_62D8: render background with trigger processing */
+    render_background();
+
+    /* sub_5B96: scroll/trigger update */
+    scroll_update();
+
+    /* check restart flag (g_restart_flag) */
+    if (g_restart_flag) return;
+
+    /* update_doors (sub_442D) */
+    update_doors();
+
+    /* update_collectibles (sub_434A) */
+    update_collectibles();
+
+    /* game_loop (sub_40BB: player movement + camera) */
+    game_loop();
+
+    /* update_enemies (sub_6F5C + sub_6F27) */
+    update_enemies();
+
+    /* update_traps (sub_4406) */
+    update_traps();
+
+    /* check_key_pickup (sub_438D) */
+    check_key_pickup();
+
+    /* check_door_exit (sub_4499) */
+    check_door_exit();
+
+    /* update HUD (sub_5A2D) — placeholder */
+
+    /* check game over */
+    if (g_game_over) return;
+
+    /* check room exit → sub_5053 */
+    if (g_room_exit) {
+        room_transition();
+        if (g_room_exit) return;
+    }
+
+    /* increment frame counter */
+    g_state_flags++;
+
+    /* camera + particles update (sub_623C) */
+    camera_update();
+    update_particles();
+}
+
+/* ==========================================================================
+ * LOOP PRINCIPAL (sub_401C)
  *
  * Estructura fiel al código original en 0x4016:
  *
@@ -162,95 +257,30 @@ static uint8_t *load_rom(const char *path, uint32_t *size_out)
  *     reset_keyframe_queue()    ; sub_6383
  *     game_reset_level()        ; sub_4D52
  *   inner_loop:
- *     run_title_or_game()       ; sub_4A4A
- *     game_reset_level()
+ *     run_title_or_game()       ; sub_4A4A  — maneja title + demo + juego
+ *     game_reset_level()        ; sub_4D52
  *     if aborted → restart_title
  *     clear_aux_state()         ; sub_4029
  *     goto inner_loop
  *
- * En la práctica, sub_4A4A contiene tanto la pantalla de título como el
- * inicio del juego; cuando el jugador pulsa fire, la intro termina y
- * empieza el loop de juego dentro de la misma llamada.
+ * sub_4A4A (title_screen) NO retorna hasta que el jugador muere (game over).
+ * Internamente maneja: 3 ciclos de título → demo mode → juego real.
  * ========================================================================== */
 static void main_loop(void)
 {
-    bool running = true;
+    while (true) {
+        /* sub_4A4A: title_screen maneja título + demo + juego completo */
+        title_screen();
 
-    while (running) {
-        /* --- Título / intro --- */
-      //music_play_title();
-        g_intro_active = 1;
-        g_state_flags  = 0;
+        /* Si el usuario cerró la ventana durante title_screen */
+        if (!hal_poll_events()) break;
 
-        /* Loop de intro: mostrar pantalla de título hasta que el jugador
-         * pulse fire o el sistema pida salir */
-        while (g_intro_active) {
-            if (!hal_poll_events()) {
-                running = false;
-                return;
-            }
-
-            title_screen();
-            tiles_animate(g_state_flags);
-            update_doors();
-            update_enemies();
-            update_particles();
-
-            camera_update();
-            g_state_flags++;
-            hal_wait_vsync();
-
-            if (hal_key_pressed()) {
-                g_intro_active = 0;
-            }
-        }
-
-        /* --- Juego --- */
+        /* sub_4D52: reset de nivel tras game over */
         game_reset_level();
-        music_play_game();
-        enemies_init();
-        particles_init();
-        doors_init();
 
-        g_game_over  = 0;
-        g_room_exit  = 0;
-        g_state_flags = 0;
-
-        while (!g_game_over) {
-            if (!hal_poll_events()) {
-                running = false;
-                return;
-            }
-
-            /* Secuencia exacta del game_loop original (0x4064..0x40B9) */
-            tiles_animate(g_state_flags);
-            render_background();
-            scroll_update();
-
-            update_doors();         /* sub_442D */
-            update_collectibles();  /* sub_434A */
-            game_loop();            /* sub_40BB: player + scroll + camera  */
-            update_enemies();       /* sub_6F5C + sub_6F27                 */
-            update_traps();         /* sub_4406                            */
-            check_key_pickup();     /* sub_438D                            */
-            check_door_exit();      /* sub_4499                            */
-            update_particles();     /* sub_6265                            */
-
-            if (g_room_exit) {
-                /* Cargar nueva sala (sub_5053) — TODO */
-                tiles_reload_walls_and_anim();
-                g_room_exit  = 0;
-                g_state_flags = 0;
-                continue;
-            }
-
-            camera_update();
-            g_state_flags++;
-            hal_wait_vsync();
-        }
-
-        /* Game over: pequeña pausa antes de volver al título */
-        hal_delay(120);  /* ~2 segundos */
+        /* sub_4029: clear aux state */
+        music_set_tempo(0u, 0u);
+        music_set_transpose(0u, 0u);
     }
 }
 

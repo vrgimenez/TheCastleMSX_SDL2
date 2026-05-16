@@ -36,6 +36,13 @@ bool hal_init(bool pal_timing);
 void hal_quit(void);
 
 /**
+ * hal_is_running() — Consulta si el usuario no ha pedido cerrar.
+ * A diferencia de hal_poll_events(), no procesa eventos. Útil para
+ * comprobar en loops que no pueden consumir el evento en ese momento.
+ */
+bool hal_is_running(void);
+
+/**
  * hal_poll_events() — Procesa eventos del sistema (input, ventana, etc.).
  * Debe llamarse una vez por frame, antes de leer el joystick.
  * @return false si el usuario pidió cerrar la aplicación.

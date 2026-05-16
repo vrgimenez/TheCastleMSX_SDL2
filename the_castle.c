@@ -305,90 +305,22 @@ void game_reset_level(void)
 }
 
 /* ==========================================================================
- * MAIN GAME LOOP (reconstructed from 0x4064..0x40B9)
+ * PLAYER UPDATE (sub_40BB) — Una iteración de movimiento del jugador
  *
- * Original Z80 (inner frame loop starting at sub_4064):
- *   4064  CALL sub_5D5D   ; check title-mode flag → sets Z if bit0=0
- *   4067  JR NZ, 0x4070   ; if in title mode, skip anim-frame reset
- *   4069  XOR A
- *   406A  LD (0xEACB),A = 0  ; reset anim frame
- *   406D  LD (0xEACC),A = 0  ; reset facing
- *   4070  CALL sub_6383   ; reset keyframe queue
- *   4073  LD A,1 → (0xEAE8)  ; enemies active
- *   4078  CALL sub_5128   ; music tick + sprite DMA
- *   407B  XOR A → (0xEAE8)   ; enemies inactive again (double-buffered)
- *   407F  CALL 0x62D8     ; render background
- *   4082  CALL sub_5B96   ; update scrolling
- *   4085  LD A,(0xEAE3) / OR A / RET NZ   ; bail if restart_flag set
- *   408A  CALL sub_442D   ; update doors/switches
- *   408D  CALL sub_434A   ; update keys/collectibles
- *   4090  CALL sub_40BB   ; update player movement (see below)
- *   4093  CALL sub_6F5C   ; update enemy AI
- *   4096  CALL sub_4406   ; update traps/spikes
- *   4099  CALL sub_438D   ; check key collection
- *   409C  CALL sub_4499   ; check door collision
- *   409F  CALL sub_5A2D   ; update HUD
- *   40A2  LD A,(0xEAE0) / OR A / RET NZ   ; bail if game_over
- *   40A7  LD A,(0xEAE1) / CALL sub_5053 / OR A / RET NZ  ; bail if room_exit
- *   40AF  LD A,(0xEAC9) / INC A → (0xEAC9) ; increment state_flags (frame ctr)
- *   40B6  CALL 0x623C     ; scroll/camera update
- *   40B9  JR sub_4064     ; next frame
+ * Original Z80:
+ *   40BB  LD HL,0x0000   ; H=dy, L=dx
+ *   40BE  LD DE,0x00FF   ; D=vertical, E=horizontal delta
+ *   40C1  LD A,(0xE334)  ; player_col
+ *   ...
+ *   [lee joystick, computa movimiento, chequea colisión, actualiza animación]
  * ========================================================================== */
 void game_loop(void)
 {
-    while (true) {
-        /* sub_5D5D: check if we're in "title/demo" mode (bit 0 of g_state_flags) */
-        bool title_mode = (g_state_flags & 0x01) != 0;
+    /* sub_6383: reset keyframe queue sentinel values */
+    memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
 
-        if (!title_mode) {
-            g_anim_frame = 0;
-            g_facing     = 0;
-        }
-
-        /* sub_6383: reset keyframe queue sentinel values */
-        memset(g_keyframe_queue, 0xFF, sizeof(g_keyframe_queue));
-
-        /* sub_5128: music tick + sprite update (enemies_active flag used as
-         * double-buffer semaphore in original — simplified here) */
-        g_enemies_active = 1;
-        music_tick();
-        g_enemies_active = 0;
-
-        /* Render background map (sub_62D8) */
-        render_map();
-
-        /* Update scroll (sub_5B96) */
-        /* scroll_update(); */
-
-        /* Check restart request */
-        if (g_restart_flag) return;
-
-        /* Update interactive objects */
-        /* update_doors();       sub_442D */
-        /* update_collectibles(); sub_434A */
-        update_player();   /* sub_40BB */
-        update_enemies();  /* sub_6F5C */
-        /* update_traps();       sub_4406 */
-        /* check_key_pickup();   sub_438D */
-        /* check_door_exit();    sub_4499 */
-        /* update_hud();         sub_5A2D */
-
-        if (g_game_over) return;
-
-        /* Check room exit (sub_5053) */
-        if (g_room_exit) {
-            /* load_next_room(); */
-            if (g_room_exit) return;
-        }
-
-        /* Increment frame counter in g_state_flags */
-        g_state_flags++;
-
-        /* Camera/scroll update (sub_623C) */
-        /* camera_update(); */
-
-        hal_wait_vsync();
-    }
+    /* Update player movement (sub_40BB) */
+    update_player();
 }
 
 /* ==========================================================================

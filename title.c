@@ -330,6 +330,13 @@ static bool animate_logo_sequence(uint16_t seq_addr, bool erase_prev, uint8_t *l
         hal_wait_vsync();
         hal_poll_events();
 
+        if (!hal_is_running()) {
+            g_intro_active = 0;
+            *last_col = prev_col;
+            *last_row = prev_row;
+            return false;
+        }
+
         if (hal_key_pressed()) {
             g_intro_active = 0;
             *last_col = prev_col;
@@ -441,6 +448,11 @@ static bool scroll_credit_strip(uint8_t end_row, uint16_t str_addr)
         hal_wait_vsync();
         hal_poll_events();
 
+        if (!hal_is_running()) {
+            g_intro_active = 0;
+            return false;
+        }
+
         if (hal_key_pressed()) {
             g_intro_active = 0;
             return false;
@@ -499,6 +511,7 @@ static bool title_wait_for_input(void)
     for (uint16_t i = 0; i < 0x80u; i++) {
         hal_wait_vsync();
         hal_poll_events();
+        if (!hal_is_running()) return false;
         if (hal_key_pressed()) {
             return true;   /* fire pulsado */
         }
@@ -560,37 +573,43 @@ static void reset_aux_state(void)
 }
 
 /* ==========================================================================
- * sub_4A4A — Pantalla de título completa
+ * sub_4A4A — Pantalla de título + demo + juego
  *
- * Estructura (B=3 ciclos):
+ * Estructura:
  *   1. Inicialización:
  *      g_intro_active = 1
- *      sub_6383 → limpiar keyframe queue (0xEACD × 9 = 0xFF)
+ *      sub_6383 → limpiar keyframe queue
  *      sub_4AE2 → preparar VRAM
- *      Cargar tileset BG1_MAIN (3 tercios)
- *      sub_4E8E → recargar WALLS + ANIM_BG
+ *      Cargar tileset BG1_MAIN
+ *      Música del título
  *
  *   2. Bucle principal B=3 ciclos (sub_4A86):
- *      a. sub_4B4C → logo animado         [si fire → goto exit]
- *      b. sub_4C0B → créditos en scroll   [si fire → goto exit]
- *      c. sub_4AD7 → esperar 128 frames   [si fire → goto exit]
+ *      a. sub_4B4C → logo animado        [si fire → goto game_start]
+ *      b. sub_4C0B → créditos en scroll  [si fire → goto game_start]
+ *      c. sub_4AD7 → esperar 128 frames  [si fire → goto game_start]
  *      d. sub_4B13 → curtain wipe
- *      Si terminaron los 3 ciclos:
- *        sub_4D52 → reset de nivel
- *        Cargar música del juego (0x7ABE)
- *        sub_4029 → limpiar estado
- *        Si g_intro_active → JP sub_4A4A (¡restart completo del intro!)
  *
- *   3. Salida (sub_4AC8):
+ *   3. Si 3 ciclos sin input → DEMO MODE:
+ *      game_reset_level()
+ *      Cargar música/keyframes de juego (0x7ABE)
+ *      sub_4029 → limpiar estado
+ *      Loop: game_frame() hasta que el jugador pulse fire
+ *           o el demo termine (6 salas)
+ *
+ *   4. JUEGO REAL (al pulsar fire):
+ *      game_reset_level()
+ *      music_play_game()
+ *      enemies_init(), particles_init(), doors_init()
+ *      Loop: game_frame() hasta game_over
+ *
+ *   5. Salida (sub_4AC8):
  *      g_intro_active = 0
  *      music_stop()
- *      sub_5327 → cleanup VRAM
- *      sub_4B13 → curtain wipe final
- *      RET
+ *      intro_cleanup()
+ *      RET → a main_loop (sub_401C)
  * ========================================================================== */
 void title_screen(void)
 {
-restart:
     /* Inicialización */
     g_intro_active = 1u;
 
@@ -600,50 +619,84 @@ restart:
     /* sub_4AE2: preparar VRAM */
     intro_prepare_vram();
 
-    /* Cargar tileset BG1_MAIN en los 3 tercios de la pattern table.
-     * sub_64AB con HL=0x7BC2, B=0x23 (35 tiles), DE=0x0073/0x0173/0x0273 */
-    extern void load_tileset_range(uint16_t desc, uint8_t vram_start,
-                                   uint8_t count, bool all);
-    /* Delegamos a tiles.c — los 3 tercios se cargan igual que en tiles_load_from_rom */
+    /* Cargar tileset BG1_MAIN */
     tiles_reload_walls_and_anim();
 
-    /* Música del título */
-    music_play_title();
+    /* Silencio durante la pantalla de título */
+    music_stop();
 
     /* Bucle de 3 ciclos */
     for (uint8_t cycle = 0u; cycle < DEMO_CYCLES; cycle++) {
 
         /* Fase 1: logo animado */
-        if (!title_animate_logo()) goto exit;
-        if (!g_intro_active) goto exit;
+        if (!title_animate_logo()) goto game_start;
+        if (!g_intro_active) goto game_start;
 
         /* Fase 2: créditos en scroll */
-        if (!title_animate_credits()) goto exit;
-        if (!g_intro_active) goto exit;
+        if (!title_animate_credits()) goto game_start;
+        if (!g_intro_active) goto game_start;
 
         /* Fase 3: esperar input */
-        bool fire = title_wait_for_input();
-        if (fire || !g_intro_active) goto exit;
+        if (title_wait_for_input()) goto game_start;
+        if (!g_intro_active) goto game_start;
 
         /* Curtain entre ciclos */
         curtain_wipe();
     }
 
-    /* 3 ciclos completados sin input: resetear nivel y empezar juego */
+    /* ======================================================================
+     * 3 ciclos sin input → DEMO MODE
+     * ====================================================================== */
     game_reset_level();
-
-    /* Cargar música del juego (ROM 0x7ABE = inicio del stream de juego) */
     {
         uint16_t music_ptr = (uint16_t)(rom_rb(ROM_GAME_MUSIC)
                              | ((uint16_t)rom_rb((uint16_t)(ROM_GAME_MUSIC + 1u)) << 8));
         music_load(music_ptr, 0u);
     }
-
     g_player_speed = 0x70u;
     reset_aux_state();
 
-    /* Si g_intro_active sigue activo → reiniciar todo el intro */
-    if (g_intro_active) goto restart;
+    /* Demo loop: corre game_frame() (con keyframes de AI desde 0x7ABE) */
+    while (g_intro_active) {
+        game_frame();
+        tiles_animate(g_state_flags);
+        hal_wait_vsync();
+
+        if (hal_key_pressed()) {
+            goto game_start;
+        }
+
+        if (!hal_poll_events()) goto exit;
+    }
+
+    /* ======================================================================
+     * JUEGO REAL (fire presionado durante título o demo)
+     * ====================================================================== */
+game_start:
+    music_stop();
+    intro_cleanup();
+
+    game_reset_level();
+    music_play_game();
+    enemies_init();
+    particles_init();
+    doors_init();
+
+    g_game_over  = 0;
+    g_room_exit  = 0;
+    g_state_flags = 0;
+
+    /* Game loop hasta game over (sub_4064 ejecutado por frame) */
+    while (!g_game_over) {
+        game_frame();
+        tiles_animate(g_state_flags);
+        hal_wait_vsync();
+
+        if (!hal_poll_events()) goto exit;
+    }
+
+    /* Game over: pausa breve */
+    hal_delay(120);
 
 exit:
     /* sub_4AC8: salida limpia */

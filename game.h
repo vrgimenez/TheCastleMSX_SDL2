@@ -100,6 +100,9 @@ void game_init(void);
 void game_reset_level(void);
 void game_loop(void);
 
+/* --- main.c (per-frame game loop) --- */
+void game_frame(void);
+
 #ifdef __cplusplus
 }
 #endif
