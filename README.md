@@ -1,27 +1,28 @@
-# The Castle — MSX → C Port
+# The Castle — MSX to C Port
 
-Port del juego **The Castle** (ASCII, 1986) de MSX a C puro con SDL2.
+Port of **The Castle** (ASCII, 1986) from MSX Z80 assembly to pure C99 with SDL2.
 
-## Estado del port
+## Port Status
 
-| Módulo | Estado | Notas |
-|---|---|---|
-| Desensamblado Z80 completo | ✅ | 25.796 líneas, todas las instrucciones |
-| HAL SDL2 (VDP, PSG, input, vsync) | ✅ | Multiplataforma |
-| `init_system()` | ✅ | |
-| `reset_level_state()` | ✅ | |
-| `game_loop()` esqueleto | ✅ | |
-| `update_player()` + colisión | ✅ | |
-| `render_map()` | ✅ | stub, falta cargar tiles desde ROM |
-| `music_tick()` / PSG | ✅ | formato de datos decodificado |
-| `score_add()` / BCD | ✅ | |
-| `update_enemies()` | 🚧 | sub_6F5C pendiente |
-| `update_doors()` | 🚧 | sub_442D pendiente |
-| Carga de tiles desde ROM | 🚧 | sub_4D0F (LDIRVM) pendiente |
-| Camera / scroll | 🚧 | sub_623C pendiente |
-| Pantalla de título | 🚧 | sub_4A4A pendiente |
+| Module | Status | Notes |
+|--------|--------|-------|
+| Full Z80 disassembly | ✅ | 25,796 lines, all instructions annotated |
+| SDL2 HAL (VDP, PSG, input, vsync) | ✅ | Cross-platform |
+| Room loading + script engine | ✅ | Complete room pipeline with script interpreter |
+| Camera + scroll | ✅ | Viewport, triggers, door transitions, death fade |
+| Title screen | ✅ | Logo animation, credit scroll, curtain wipe, demo mode |
+| Enemy AI (roller, bat) | ✅ | Full movement, patterns, drawing |
+| Doors + collectibles + traps | ✅ | 5 object types, key system, spike traps |
+| Particles + effects | ✅ | Spark, death, trap-bat animations |
+| Music engine + PSG | ✅ | Full note/period table, tempo, SFX volumes |
+| Tile loading from ROM | ✅ | RAM dump eliminated — 185 tiles mapped from ROM |
+| Player movement + collision | ✅ | Complete with map collision |
+| Score + BCD | ✅ | Score add, hi-score, display (DAA simplification noted) |
+| `game_loop()` / `the_castle.c` | 🚧 | Skeleton functional; several subroutines simplified vs original |
+| `update_roller_by_pos()` | 🚧 | Stub — draws tile, no enemy slot instantiation |
+| `update_bat_by_slot()` | 🚧 | Stub — draws tile, no enemy slot instantiation |
 
-## Dependencias
+## Dependencies
 
 ### Linux
 ```bash
@@ -34,78 +35,95 @@ brew install cmake sdl2
 ```
 
 ### Windows
-1. Instalar [CMake](https://cmake.org/download/)
-2. Descargar [SDL2-devel-2.x.x-VC.zip](https://libsdl.org/download-2.0.php)
-3. Extraer SDL2 y pasar la ruta al cmake:
+1. Install [CMake](https://cmake.org/download/)
+2. Download [SDL2-devel-2.x.x-VC.zip](https://libsdl.org/download-2.0.php)
+3. Extract SDL2 and pass the path to cmake:
 ```powershell
 cmake -B build -DSDL2_DIR="C:\SDL2\cmake"
 cmake --build build --config Release
 ```
 
-## Compilar y correr
+## Build & Run
 
 ```bash
-# Clonar / preparar los archivos
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-./the_castle
+cmake -B build
+cmake --build build
+build/the_castle [path/to/the_castle.rom]
 ```
 
-### Opciones de build
+The original 32 KB game ROM is required at runtime — it provides music data, room scripts, and tile descriptors.
+
+### Build Options
 
 ```bash
-# PAL (50Hz) en vez de NTSC (60Hz)
-cmake .. -DPAL_TIMING=ON
+# PAL (50 Hz) instead of NTSC (60 Hz)
+cmake -B build -DPAL_TIMING=ON
 
-# Debug con AddressSanitizer
-cmake .. -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
+# Debug build with AddressSanitizer
+cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=ON
 ```
 
-## Controles
+## Controls
 
-| Teclado | Joystick MSX |
-|---|---|
-| Cursores / WASD | Dirección |
+| Keyboard | MSX Joystick |
+|----------|-------------|
+| Arrows / WASD | Direction |
 | Z / Space / Ctrl | Fire 1 |
 | X | Fire 2 |
-| Escape | Salir |
+| Escape | Quit |
 
-## Arquitectura del código
+## Code Architecture
 
 ```
-the_castle.c   — Lógica pura del juego (sin dependencias de plataforma)
-hal.h          — Interface HAL (lo único que ve the_castle.c)
-hal_sdl2.c     — Implementación SDL2 (VDP, PSG, input, timing)
-CMakeLists.txt — Build system multiplataforma
+the_castle.c   — Core game logic (platform-independent)
+room.c         — Room loading, script execution, tile reload
+camera.c       — Viewport, scroll, triggers, border drawing
+title.c        — Title screen, logo, credits, demo
+enemies.c      — Enemy AI (roller, bat)
+doors.c        — Doors, collectibles, keys, traps, push blocks
+particles.c    — Particle effects (sparks, death, trap-bat)
+music.c        — PSG music engine
+tiles.c        — Tile loading from ROM via lookup table
+main.c         — Entry point, main loop, ROM loading
+hal.h          — HAL interface (pure header)
+hal_sdl2.c     — SDL2 implementation (VDP, PSG, input, timing)
+CMakeLists.txt — Cross-platform build system
 ```
 
-### Agregar una nueva plataforma
+### Adding a New Platform
 
-1. Crear `hal_miplatforma.c`
-2. Implementar todas las funciones declaradas en `hal.h`
-3. Agregar las fuentes al `CMakeLists.txt`
+1. Write `hal_<platform>.c`
+2. Implement all functions declared in `hal.h`
+3. Add source files to `CMakeLists.txt`
 
-### Diseño del VDP emulado
+### Emulated VDP Design
 
-El TMS9918A en modo Screen 2 (Graphics II) se emula con:
-- **VRAM**: 16KB en RAM del host
-- **Render**: por software a un framebuffer RGBA de 256×192
-- **Paleta**: 16 colores TMS9918A exactos
-- **Sprites**: hasta 32 sprites de 16×16, límite de 4 por scanline
+The TMS9918A in Screen 2 (Graphics II) mode is emulated via:
+- **VRAM**: 16 KB host RAM
+- **Render**: Software into a 256×192 RGBA framebuffer
+- **Palette**: 16 exact TMS9918A colors
+- **Sprites**: Up to 32 16×16 sprites, 4-per-scanline limit
 
-### Síntesis PSG
+### PSG Synthesis
 
-El AY-3-8910 se sintetiza con:
-- Onda cuadrada por canal (A, B, C)
-- LFSR de 17 bits para el canal de ruido
-- Tabla de volúmenes logarítmica estándar del AY
-- Buffer de audio de 512 samples @ 44100 Hz
+The AY-3-8910 is synthesized with:
+- Square wave per channel (A, B, C)
+- 17-bit LFSR for noise channel
+- Standard AY logarithmic volume table
+- 512-sample audio buffer @ 44100 Hz
 
-## Archivos del disasm
+## Disassembly
 
-`the_castle_disasm.asm` — Desensamblado completo con:
-- Labels para todas las subrutinas (`sub_XXXX`)
-- Anotaciones de llamadas al BIOS MSX (`BIOS_CHPUT`, `BIOS_WRTPSG`, etc.)
-- Variables del Work RAM del MSX identificadas
-- Contador de llamadas por subrutina
+`the_castle_disasm.asm` — Complete annotated disassembly with:
+- Labels for all subroutines (`sub_XXXX`)
+- MSX BIOS call annotations (`BIOS_CHPUT`, `BIOS_WRTPSG`, etc.)
+- Identified MSX Work RAM variables
+- Per-subroutine call counters
+
+## Key Gotchas
+
+- **ROM required at runtime** — provides all game data (music, rooms, tiles)
+- **`music_isr_tick()` lives in `hal_wait_vsync()`**, not in the game loop — mirrors the MSX VBlank ISR
+- **Two map layers**: `g_map[0x400]` (20×30 collision) and `g_tilemap[]` (30×30 visual)
+- **BCD room coords**: `g_room_x` stores BCD (hi-nibble = row, lo-nibble = column)
+- **Tiles are NOT compressed** — all 185 tiles verified as raw 16-byte interleaved (pattern + color)
