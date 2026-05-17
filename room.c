@@ -233,13 +233,25 @@ static void room_clear_state(void)
 extern void tiles_reload_walls_and_anim(void);
 extern void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
 
-/* Carga N tiles de ts_addr → vram_start (todos los tercios) */
+/* Carga N tiles de raw tile data desde ROM → VRAM
+ * El descriptor almacena la dirección base de los datos raw (16 bytes interleaved
+ * por tile). Los primeros 4 descriptores (0x7BC0-0x7BC6) tienen dirección completa.
+ * Los descriptores 0x7BC8+ usan formato compacto (solo byte bajo) y requieren
+ * que el byte alto se determine por contexto. */
 static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
                          uint8_t count, bool all_thirds)
 {
-    uint16_t block_addr = rom_rw(ts_desc_addr);
+    uint16_t base_addr;
+    switch (ts_desc_addr) {
+        case 0x7BC2: base_addr = 0x8056; break;  /* BG1_MAIN */
+        case 0x7BCE: base_addr = 0x86F6; break;  /* ANIM_BG */
+        case 0x7BD0: base_addr = 0x8796; break;  /* WALLS */
+        case 0x7BD4: base_addr = 0x9A76; break;  /* DOOR */
+        case 0x7BD8: base_addr = 0x9A96; break;  /* DOOR_EXTRA */
+        default:     base_addr = rom_rw(ts_desc_addr); break;
+    }
     for (uint8_t i = 0; i < count; i++) {
-        uint16_t tile_src = rom_rw((uint16_t)(block_addr + (uint16_t)i * 2u));
+        uint16_t tile_src = (uint16_t)(base_addr + (uint16_t)i * 16u);
         uint8_t  tile_idx = (uint8_t)(vram_start + i);
         int thirds = all_thirds ? 3 : 1;
         for (int t = 0; t < thirds; t++) {

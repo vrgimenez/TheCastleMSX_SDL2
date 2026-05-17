@@ -1,4 +1,5 @@
 .vscode/
 .zip/
 build/
+vram/
 *.exe
