@@ -123,13 +123,20 @@ static void vdp_clear_row(uint8_t row)
  * sub_62B0 — Codificación de carácter a tile (igual que en room.c / camera.c)
  *
  * 0x20 = espacio → tile 0
- * 0x30-0x39 = dígito → tile = (byte - 0x30) + 0x5D
- * otro → tile = byte - 0x41 + tile_base (donde tile_base = 0x73 normalmente)
+ * 0x30-0x39 = dígito → tile = (byte - 0x30) + 0x1C + tile_base
+ *                    (Z80: SUB 0x30; ADD 0x5D; FALL THROUGH: SUB 0x41; ADD C)
+ * otro → tile = byte - 0x41 + tile_base
+ *
+ * Para créditos (tile_base = 0x01):
+ *   'A'..'Z' → tiles 0x01..0x1A
+ *   '['      → tile 0x1B
+ *   '0'..'9' → tiles 0x1D..0x26
  * ========================================================================== */
 static uint8_t char_to_tile(uint8_t chr, uint8_t tile_base)
 {
     if (chr == 0x20u) return 0x00u;
-    if (chr >= 0x30u && chr < 0x3Au) return (uint8_t)(chr - 0x30u + 0x5Du);
+    if (chr >= 0x30u && chr < 0x3Au)
+        return (uint8_t)(chr - 0x30u + 0x1Cu + tile_base);
     return (uint8_t)(chr - 0x41u + tile_base);
 }
 
@@ -202,6 +209,30 @@ static void curtain_wipe(void)
         hal_wait_vsync();
         top += 2u;
         if (bot >= 2u) bot -= 2u;
+    }
+}
+
+/* ==========================================================================
+ * Cargar los 4 tiles decorativos de BG1_MAIN (ROM 0x8056) a VRAM 0x73-0x76
+ *
+ * El logo del título usa tile_base=0x73. Los primeros 4 tiles (0x73-0x76)
+ * son el borde decorativo de BG1_MAIN (ROM 0x8056), no los tiles de pared
+ * (ROM 0x89C6). intro_prepare_vram limpia tercios 1-2, así que esto debe
+ * ejecutarse después.
+ * ========================================================================== */
+static void load_title_border_tiles(void)
+{
+    uint32_t foff = 0x8056u - 0x4000u;
+    for (uint8_t i = 0u; i < 4u; i++) {
+        uint8_t idx = (uint8_t)(0x73u + i);
+        for (int t = 0; t < 3; t++) {
+            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            for (int r = 0; r < 8; r++) {
+                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
+                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
+            }
+        }
     }
 }
 
@@ -416,7 +447,7 @@ static void draw_credit_row(uint8_t row, uint16_t str_addr, bool draw)
         uint8_t chr = rom_rb(ptr++);
         if (chr == STR_END) break;
 
-        uint8_t tile = char_to_tile(chr, 0x73u);
+        uint8_t tile = char_to_tile(chr, 0x01u);
 
         if (col < 32u) {
             hal_vdp_write_vram((uint16_t)(addr + col), tile);
@@ -619,8 +650,14 @@ void title_screen(void)
     /* sub_4AE2: preparar VRAM */
     intro_prepare_vram();
 
-    /* Cargar tileset BG1_MAIN */
-    tiles_reload_walls_and_anim();
+    /* Recargar TODOS los tiles desde g_tiles al VRAM (intro_prepare_vram limpió tercios 1-2
+     * y tiles 0x80+ del tercio 0, que incluye los bloques A/B/C del logo en 0x77-0xB8
+     * y los tiles de fuente BIOS en 0x01-0x26 para los créditos) */
+    tiles_reload_all();
+
+    /* Sobreescribir 0x73-0x76 con borde decorativo desde ROM
+     * (g_tiles[0x73-0x76] son variantes de pared de juego, no el borde del título) */
+    load_title_border_tiles();
 
     /* Silencio durante la pantalla de título */
     music_stop();

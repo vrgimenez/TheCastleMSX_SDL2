@@ -89,13 +89,21 @@ void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
         write_tile_to_vdp(i, i, -1);
 }
 
+void tiles_reload_all(void)
+{
+    for (uint8_t i = 0u; i < (uint8_t)TILE_COUNT; i++)
+        write_tile_to_vdp(i, i, -1);
+}
+
 void tiles_reload_walls_and_anim(void)
 {
-    for (uint8_t i = 0u; i < 28u; i++) {
+    /* WALLS 0x59-0x72: 26 tiles */
+    for (uint8_t i = 0u; i < 26u; i++) {
         uint8_t idx = (uint8_t)(0x59u + i);
         if (idx < (uint8_t)TILE_COUNT)
             write_tile_to_vdp(idx, idx, -1);
     }
+    /* ANIM_BG 0x47-0x50: 10 tiles */
     for (uint8_t i = 0u; i < 10u; i++) {
         uint8_t idx = (uint8_t)(0x47u + i);
         if (idx < (uint8_t)TILE_COUNT)
@@ -113,7 +121,45 @@ void tiles_animate(uint8_t frame_counter)
         write_tile_to_vdp(next_src, dst, -1);
 }
 
-void tiles_load_bios_rom(const char *path) { (void)path; }
+/* Escribir un tile de font de 8 bytes (no interleaved) a VRAM y g_tiles */
+static void deploy_font_tile(uint8_t vdp_idx, const uint8_t *pat8)
+{
+    if (vdp_idx >= (uint8_t)TILE_COUNT) return;
+    for (int r = 0; r < 8; r++) {
+        g_tiles[vdp_idx][r * 2]     = pat8[r];
+        g_tiles[vdp_idx][r * 2 + 1] = 0xF1u;
+    }
+    write_tile_to_vdp(vdp_idx, vdp_idx, -1);
+}
+
+void tiles_load_bios_rom(const char *path)
+{
+    if (!path) return;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 0x0800) { fclose(f); return; }
+
+    /* Read MSX1 BIOS charset (256 chars × 8 bytes raw pattern) */
+    unsigned char font[2048];
+    if (fread(font, 1, sizeof(font), f) != sizeof(font)) { fclose(f); return; }
+    fclose(f);
+
+    /* Letters A–Z → tiles 0x01–0x1A (credit tile_base=0x01) */
+    for (uint8_t c = 0x41u; c <= 0x5Au; c++)
+        deploy_font_tile((uint8_t)(c - 0x41u + 0x01u), &font[c * 8u]);
+
+    /* '[' → tile 0x1B */
+    deploy_font_tile(0x1Bu, &font[0x5Bu * 8u]);
+
+    /* Digits 0–9 → tiles 0x1D–0x26 */
+    for (uint8_t c = 0x30u; c <= 0x39u; c++)
+        deploy_font_tile((uint8_t)(c - 0x30u + 0x1Cu + 0x01u), &font[c * 8u]);
+}
 
 uint8_t tiles_vram_idx_blank(void)        { return 0x00u; }
 uint8_t tiles_vram_idx_door(void)         { return 0x0Du; }

@@ -609,7 +609,7 @@ void camera_draw_string(uint8_t col, uint8_t row,
         if (byte == 0x20u) {
             tile = 0u;  /* espacio */
         } else if (byte >= 0x30u && byte < 0x3Au) {
-            tile = (uint8_t)(byte - 0x30u + 0x5Du);  /* dígito */
+            tile = (uint8_t)(byte - 0x30u + 0x1Cu + tile_base);  /* dígito */
         } else {
             tile = (uint8_t)(byte - 0x41u + tile_base);  /* letra */
         }

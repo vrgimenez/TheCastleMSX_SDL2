@@ -25,7 +25,11 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 
 - **ROM required at runtime.** The original 32KB `.rom` file must be available. It provides music data, room scripts, tile descriptors.
 - **`music_isr_tick()` lives in `hal_wait_vsync()`**, NOT in the game loop — mimics the MSX VBlank ISR.
-- **Init order matters:** `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`.
+- **Init order matters:** `hal_init` → `tiles_load_from_rom` → `tiles_load_bios_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`.
+- **`char_to_tile` digit formula:** `chr - 0x30 + 0x1C + tile_base` (Z80 falls through `ADD 0x5D` → `SUB 0x41` → `ADD C`). Three copies: `title.c`, `camera.c` (both fixed), `room.c` (different encoding).
+- **Credit text uses `tile_base=0x01`**, NOT 0x73. `draw_credit_row()` in `title.c` passes `0x01u`.
+- **Title screen loads BG1_MAIN (4 tiles @ 0x8056) to VRAM 0x73-0x76** via `load_title_border_tiles()` after `intro_prepare_vram()` — the logo draws from `tile_base=0x73`.
+- **`tiles_reload_walls_and_anim()`** reads from `g_tiles` (not ROM), writes WALLS 0x59-0x72 + ANIM_BG 0x47-0x50. Does NOT touch 0x73-0x76 (wall variants stay as loaded by `TILE_MAP` at init; title screen overrides them with BG1_MAIN border).
 - **Stubs in `main.c`:** `update_roller_by_pos()` and `update_bat_by_slot()` are temporary wrappers in `main.c` that `doors.c` depends on.
 - **Two map layers:** `g_map[0x400]` (20×30 collision map) and `g_tilemap[]` (30×30 visual map).
 - **BCD room coords:** `g_room_x` uses BCD (hi-nibble=row, lo-nibble=column). Arithmetic is DAA-style, not binary.
