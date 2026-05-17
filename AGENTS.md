@@ -29,9 +29,11 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 - **Stubs in `main.c`:** `update_roller_by_pos()` and `update_bat_by_slot()` are temporary wrappers in `main.c` that `doors.c` depends on.
 - **Two map layers:** `g_map[0x400]` (20×30 collision map) and `g_tilemap[]` (30×30 visual map).
 - **BCD room coords:** `g_room_x` uses BCD (hi-nibble=row, lo-nibble=column). Arithmetic is DAA-style, not binary.
-- **Tiles loaded from ROM at runtime.** `tiles.c` reads raw 16-byte interleaved (8 pattern + 8 color) tiles from the game ROM file using a lookup table. The old hardcoded `VRAM_TILES[]` array and `vram_tiles.c` have been removed — no VRAM dumps needed.
-- **Tile data is NOT compressed.** All verified tiles in ROM are raw 16-byte format (pattern/color interleaved). The old assumption of "compressed tiles" was wrong.
-- **ROM tile descriptor table at 0x7BC0+:** First 4 entries (0x7BC0-0x7BC6) store full 16-bit ROM addresses; entries 0x7BC8+ use a compact format (hi byte = context, lo byte = stored in ROM). `load_tileset()` in `room.c` handles both formats with a lookup.
+- **Tiles loaded from ROM at runtime.** `tiles.c` reads raw 16-byte interleaved tiles from the game ROM using a 19-entry `TILE_MAP[]` table. Hardcoded `VRAM_TILES[]` and `vram_tiles.c` removed.
+- **Tile data is NOT compressed.** All verified tiles in ROM are raw 16-byte format (pattern/color interleaved).
+- **ROM tile descriptor table at 0x7BC0+:** First 4 entries store full 16-bit ROM addresses; entries 0x7BC8+ use compact format (hi byte = context, lo byte = stored). `load_tileset()` in `room.c` handles both.
+- **All title-screen tiles verified via VRAM dump:** block A (0x77-0x87 @ 0x9116), block B (0x88-0x95 @ 0x81A6, **not** 0x9926), block C (0x96-0xB8 @ 0x8286). Title screen uses BG1_MAIN data (0x8056) at indices 0x73-0x76 for borders.
+- **Gameplay wall tiles 0x73-0x76** are stored separately after the main WALLS block: 0x73-0x74 @ 0x89C6, 0x75-0x76 @ 0x8966 (not contiguous with the 26-tile WALLS range 0x59-0x72 @ 0x8796).
 - **`vram_tiles.c` deleted** — removed from build.
 
 ## Controls
