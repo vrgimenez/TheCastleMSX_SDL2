@@ -36,8 +36,9 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 - **Tiles loaded from ROM at runtime.** `tiles.c` reads raw 16-byte interleaved tiles from the game ROM using a 19-entry `TILE_MAP[]` table. Hardcoded `VRAM_TILES[]` and `vram_tiles.c` removed.
 - **Tile data is NOT compressed.** All verified tiles in ROM are raw 16-byte format (pattern/color interleaved).
 - **ROM tile descriptor table at 0x7BC0+:** First 4 entries store full 16-bit ROM addresses; entries 0x7BC8+ use compact format (hi byte = context, lo byte = stored). `load_tileset()` in `room.c` handles both.
-- **All title-screen tiles verified via VRAM dump:** block A (0x77-0x87 @ 0x9116), block B (0x88-0x95 @ 0x81A6, **not** 0x9926), block C (0x96-0xB8 @ 0x8286). Title screen uses BG1_MAIN data (0x8056) at indices 0x73-0x76 for borders.
-- **Gameplay wall tiles 0x73-0x76** are stored separately after the main WALLS block: 0x73-0x74 @ 0x89C6, 0x75-0x76 @ 0x8966 (not contiguous with the 26-tile WALLS range 0x59-0x72 @ 0x8796).
+- **Title logo (70 tiles, 0x73-0xB8) comes entirely from ROM 0x8056.** First 4 tiles (0x73-0x76) are the decorative border; remaining 66 tiles (0x77-0xB8, from ROM 0x8096) form the logo body. The same ROM data is used at VRAM 0x27-0x42 as BG1_MAIN tileset during gameplay (first 28 tiles only).
+- **Gameplay wall tiles 0x73-0x76** are stored separately after the main WALLS block: 0x73-0x74 @ 0x89C6, 0x75-0x76 @ 0x8966 (not contiguous with the 26-tile WALLS range 0x59-0x72 @ 0x8796). These are loaded to `g_tiles[]` at init, but VRAM is overwritten by the logo border during the title screen.
+- **Per-third tile model:** tiles are loaded per-screen, not per `TILE_MAP`. Each of the 3 screen thirds can have different tile data at the same VRAM index. `TILE_MAP` only provides the "default" data for third 0; title screen and room loads write to individual thirds independently.
 - **`vram_tiles.c` deleted** — removed from build.
 
 ## Controls

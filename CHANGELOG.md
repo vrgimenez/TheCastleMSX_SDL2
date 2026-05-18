@@ -32,6 +32,11 @@
   blocks (0x77-0xB8) and BIOS font tiles (0x01-0x26) cleared in thirds 1-2 —
   causing corrupted title logo and credit text in those screen bands.
 
+- **tiles.c** (`TILE_MAP`): Replaced title block entries (A: 0x9116, B: 0x81A6,
+  C: 0x8286) with single 66-tile logo body entry from ROM 0x8096 (tile #5+ of
+  the full logo dataset at 0x8056). The entire title logo (70 tiles, 0x73-0xB8)
+  is a contiguous block starting at ROM 0x8056, not three separate blocks.
+
 - **tiles.c** (`tiles_reload_walls_and_anim`): Loop count corrected from 28 to
   26 (was writing indices 0x59-0x74, clobbering wall variant tiles 0x73-0x74).
 

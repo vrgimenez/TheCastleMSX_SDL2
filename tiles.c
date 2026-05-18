@@ -34,9 +34,7 @@ static const struct {
     { 0x73, ROM_ADDR(0x89C6), 2 },    /* wall tiles 0x73-0x74 */
     { 0x75, ROM_ADDR(0x8966), 2 },    /* wall tiles 0x75-0x76 */
     { 0x37, ROM_ADDR(0x7F66), 15 },   /* HUD/score (0x37-0x45, overwrites BG0) */
-    { 0x77, ROM_ADDR(0x9116), 17 },   /* title block A (0x77-0x87) */
-    { 0x88, ROM_ADDR(0x81A6), 14 },   /* title block B (0x88-0x95) */
-    { 0x96, ROM_ADDR(0x8286), 35 },   /* title block C (0x96-0xB8) */
+    { 0x77, ROM_ADDR(0x8096), 66 },   /* LOGO body (0x77-0xB8) — tile #5+ from ROM 0x8056 */
 };
 #define N_MAPS (sizeof(TILE_MAP)/sizeof(TILE_MAP[0]))
 
