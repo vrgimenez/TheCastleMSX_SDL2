@@ -16,7 +16,9 @@
   from ROM **0x86F6** (same data as ANIM_BG) to VRAM 0x5D-0x66 in thirds 1-2 only.
 
 - **title.c**: Added `load_credit_font_tiles()` — loads font letter patterns
-  from ROM **0x8796** (same data as WALLS) to VRAM 0x6E-0x87 in thirds 1-2 only.
+  from ROM **0x8796** (same data as WALLS, 28 tiles) to VRAM 0x6E-0x87 in
+  thirds 1-2 only. The two extra tiles (0x8936-0x8956) provide the custom
+  `'['` → "(c)" and `'\'` → "?" symbols used in credits.
 
 - **title.c** (`title_screen`): Calls both loading functions after
   `load_title_border_tiles()` so credit text renders correctly in thirds 1-2

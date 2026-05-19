@@ -264,16 +264,18 @@ static void load_credit_digit_tiles(void)
 }
 
 /* ==========================================================================
- * Cargar tiles de letras (ROM 0x8796) a VRAM 0x6E-0x87 en thirds 1-2
+ * Cargar tiles de letras (ROM 0x8796) a VRAM 0x6E-0x89 en thirds 1-2
  *
- * El Z80 char_to_tile mapea 'A'..'Z' → VRAM 0x6E..0x87.
- * Las letras están en ROM 0x8796 (mismo data que font y WALLS).
+ * El Z80 char_to_tile mapea 'A'..'Z' → VRAM 0x6E..0x87,
+ * '[' → 0x88 (muestra "(c)"), '\' → 0x89 (muestra "?").
+ * Las 26 letras están en ROM 0x8796. Los 2 símbolos extra (0x8936-0x8956)
+ * son tiles editados para los créditos (28 total).
  * Cargamos a VRAM en thirds 1-2 para los créditos.
  * ========================================================================== */
 static void load_credit_font_tiles(void)
 {
     uint32_t foff = ROM_FONT_TILES - 0x4000u;
-    for (uint8_t i = 0u; i < 26u; i++) {
+    for (uint8_t i = 0u; i < 28u; i++) {
         uint8_t idx = (uint8_t)(0x6Eu + i);
         for (int t = 1; t <= 2; t++) {
             uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);

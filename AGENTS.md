@@ -30,9 +30,10 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 - **Credit text tile map (Z80 char_to_tile, thirds 1-2):**
   - `'0'..'9'` → VRAM tiles **0x5D..0x66**
   - `'A'..'Z'` → VRAM tiles **0x6E..0x87**
-  - `'['` → VRAM tile **0x88** (from logo tile block)
+  - `'['` → VRAM tile **0x88** (shows as "(c)" — custom edit)
+  - `'\'` → VRAM tile **0x89** (shows as "?" — custom edit)
   - Digits loaded from ROM **0x86F6** (same data as ANIM_BG) by `load_credit_digit_tiles()` in title.c
-  - Letters loaded from ROM **0x8796** (same data as font/WALLS) by `load_credit_font_tiles()` in title.c
+  - Letters loaded from ROM **0x8796** (28 tiles, same data as font/WALLS) by `load_credit_font_tiles()` in title.c — count=28 includes the two custom symbol tiles at 0x8936 (`[` and `\`)
   - Both written to VRAM thirds 1-2 ONLY, leaving third 0's WALLS data intact
 - **No embedded digit patterns.** The old `FONT_DIGITS` const arrays in `tiles.c` removed — digits come from ROM 0x86F6.
 - **Title screen loads BG1_MAIN (4 tiles @ 0x8056) to VRAM 0x73-0x76** via `load_title_border_tiles()` after `intro_prepare_vram()` — the logo draws from `tile_base=0x73`.
