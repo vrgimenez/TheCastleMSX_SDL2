@@ -471,63 +471,51 @@ static bool title_animate_logo(void)
 }
 
 /* ==========================================================================
- * sub_4C5C / sub_4C81 — Dibujar/borrar una fila de texto de créditos
+ * sub_4C5C / sub_4C81 — Dibujar/borrar texto de créditos en (row, start_col)
  *
- * sub_4C5C (C=1, "dibujar"): escribe los tiles de la string en la fila H
- * sub_4C81 (C=0, "borrar"):  escribe tile 0x00 en los 32 bytes de la fila H
+ * sub_4C5C (C=1, "dibujar"): escribe los tiles de la string desde start_col
+ * sub_4C81 (C=0, "borrar"):  escribe tile 0x00 desde start_col
  *
- * La string termina en 0x40. Caracteres codificados con sub_62B0.
- * sub_62C2: antes de escribir, si B > 0 → esperar B frames (sub_5128)
+ * Z80: H = start_col (loop var), L = C = row (fijo). INC H por cada char.
+ * Si H >= 0x20, saltea el caracter (offscreen).
+ * HL/DE restaurados al final (PUSH/POP).
  * ========================================================================== */
-static void draw_credit_row(uint8_t row, uint16_t str_addr, bool draw)
+static void draw_credit_row(uint8_t row, uint8_t start_col,
+                            uint16_t str_addr, bool draw)
 {
-    uint16_t addr = vram_row_addr(row);
-
-    if (!draw) {
-        /* Borrar fila */
-        for (uint8_t i = 0; i < 32u; i++) {
-            hal_vdp_write_vram((uint16_t)(addr + i), 0x00u);
-        }
-        return;
-    }
-
-    /* Dibujar string */
-    uint16_t ptr = str_addr;
-    uint8_t  col = 0;
+    uint16_t base = vram_row_addr(row);
+    uint16_t ptr  = str_addr;
+    uint8_t  col  = start_col;
 
     while (col < 32u) {
         uint8_t chr = rom_rb(ptr++);
         if (chr == STR_END) break;
 
-        uint8_t tile = char_to_tile(chr, 0x01u);
-
-        if (col < 32u) {
-            hal_vdp_write_vram((uint16_t)(addr + col), tile);
+        uint8_t tile;
+        if (!draw) {
+            tile = 0x00u;  /* borrar */
+        } else {
+            tile = char_to_tile(chr, 0x01u);
         }
+        hal_vdp_write_vram((uint16_t)(base + col), tile);
         col++;
     }
 }
 
 /* ==========================================================================
- * sub_4C3D — Scroll de un strip de créditos desde arriba hasta su posición
+ * sub_4C3D — Scroll horizontal de créditos (derecha → izquierda)
  *
- * Original:
- *   H=0x1D, L=C   → H empieza en fila 29 (fuera de pantalla)
- *   Loop:
- *     sub_4C5C → dibujar string en fila H
- *     sub_5128 → 1 frame
- *     Si fire → g_intro_active=0; RET Z
- *     sub_4C81 → borrar fila H
- *     DEC H     → subir 1 fila
- *     Si H != B → repetir
- *   sub_4C5C → dibujar en posición final (H==B)
- *   RET NZ (completado)
+ * Z80:
+ *   H=0x1D (start_col), L=C=row (fijo)
+ *   Loop: sub_4C5C, sub_5128, sub_4C81, DEC H, CP B → loop
+ *   sub_4C5C final
  * ========================================================================== */
-static bool scroll_credit_strip(uint8_t end_row, uint16_t str_addr)
+static bool scroll_credit_strip(uint8_t row, uint8_t target_col,
+                                uint16_t str_addr)
 {
-    /* Animar el strip bajando desde la fila 0x1D hasta end_row */
-    for (uint8_t h = 0x1Du; h > end_row; h--) {
-        draw_credit_row(h, str_addr, true);
+    /* Scroll horizontal: columna inicial = 0x1D, desciende hasta target_col */
+    for (uint8_t h = 0x1Du; h > target_col; h--) {
+        draw_credit_row(row, h, str_addr, true);
         hal_wait_vsync();
         hal_poll_events();
 
@@ -541,32 +529,29 @@ static bool scroll_credit_strip(uint8_t end_row, uint16_t str_addr)
             return false;
         }
 
-        draw_credit_row(h, str_addr, false);
+        draw_credit_row(row, h, str_addr, false);
     }
 
-    /* Dibujar en posición final */
-    draw_credit_row(end_row, str_addr, true);
+    draw_credit_row(row, target_col, str_addr, true);
     return g_intro_active != 0;
 }
 
 /* ==========================================================================
  * sub_4C0B — Animar los 5 strips de créditos (fase 2)
  *
- * Llama sub_4C3D 5 veces con los distintos strips:
- *   Strip 1: end_row=0x0E, str_addr=0x567F
- *   Strip 2: end_row=0x10, str_addr=0x5694
- *   Strip 3: end_row=0x12, str_addr=0x56AB
- *   Strip 4: end_row=0x14, str_addr=0x56B5
- *   Strip 5: end_row=0x16, str_addr=0x56B8
- *
- * Si alguno retorna Z (fire pulsado) → RET Z (salir)
+ * Z80: BC=(target_col, row), DE=string_addr
+ *   Strip 1: BC=0x060E, DE=0x567F  → row=14, target_col=6
+ *   Strip 2: BC=0x0510, DE=0x5694  → row=16, target_col=5
+ *   Strip 3: BC=0x0C12, DE=0x56AB  → row=18, target_col=12
+ *   Strip 4: BC=0x0F14, DE=0x56B5  → row=20, target_col=15
+ *   Strip 5: BC=0x0816, DE=0x56B8  → row=22, target_col=8
  * ========================================================================== */
-static const struct { uint8_t row; uint16_t addr; } CREDIT_STRIPS[5] = {
-    { 0x0E, ROM_CREDIT_1 },
-    { 0x10, ROM_CREDIT_2 },
-    { 0x12, ROM_CREDIT_3 },
-    { 0x14, ROM_CREDIT_4 },
-    { 0x16, ROM_CREDIT_5 },
+static const struct { uint8_t row; uint8_t target_col; uint16_t addr; } CREDIT_STRIPS[5] = {
+    { 0x0E, 0x06, ROM_CREDIT_1 },
+    { 0x10, 0x05, ROM_CREDIT_2 },
+    { 0x12, 0x0C, ROM_CREDIT_3 },
+    { 0x14, 0x0F, ROM_CREDIT_4 },
+    { 0x16, 0x08, ROM_CREDIT_5 },
 };
 
 static bool title_animate_credits(void)
@@ -574,7 +559,9 @@ static bool title_animate_credits(void)
     g_player_speed = 0x20u;
 
     for (int i = 0; i < 5; i++) {
-        if (!scroll_credit_strip(CREDIT_STRIPS[i].row, CREDIT_STRIPS[i].addr))
+        if (!scroll_credit_strip(CREDIT_STRIPS[i].row,
+                                 CREDIT_STRIPS[i].target_col,
+                                 CREDIT_STRIPS[i].addr))
             return false;
         if (!g_intro_active) return false;
     }
