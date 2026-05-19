@@ -108,6 +108,15 @@ void tiles_reload_walls_and_anim(void)
     }
 }
 
+void tiles_write_range_to_thirds(uint8_t start_idx, uint8_t count, int third)
+{
+    for (uint8_t i = 0u; i < count; i++) {
+        uint8_t idx = (uint8_t)(start_idx + i);
+        if (idx < (uint8_t)TILE_COUNT)
+            write_tile_to_vdp(idx, idx, third);
+    }
+}
+
 void tiles_animate(uint8_t frame_counter)
 {
     if ((frame_counter & 0x03u) != 0u) return;

@@ -698,12 +698,6 @@ void title_screen(void)
      * (g_tiles[0x73-0x76] son variantes de pared de juego, no el borde del título) */
     load_title_border_tiles();
 
-    /* Cargar dígitos (ROM 0x86F6) a VRAM 0x5D-0x66 en thirds 1-2
-     * y letras (ROM 0x8796) a VRAM 0x6E-0x87 en thirds 1-2
-     * para que char_to_tile (Z80: chr - 0x30 + 0x5D) funcione en créditos */
-    load_credit_digit_tiles();
-    load_credit_font_tiles();
-
     /* Silencio durante la pantalla de título */
     music_stop();
 
@@ -714,16 +708,25 @@ void title_screen(void)
         if (!title_animate_logo()) goto game_start;
         if (!g_intro_active) goto game_start;
 
-        /* Fase 2: créditos en scroll */
+        /* Cargar dígitos/letras a thirds 1-2 para créditos
+         * (se cargan justo antes, no al init, para no pisar el logo) */
+        load_credit_digit_tiles();
+        load_credit_font_tiles();
+
+        /* Fase 2: créditos en scroll (usa thirds 1-2) */
         if (!title_animate_credits()) goto game_start;
         if (!g_intro_active) goto game_start;
 
-        /* Fase 3: esperar input */
+        /* Fase 3: esperar input (créditos visibles) */
         if (title_wait_for_input()) goto game_start;
         if (!g_intro_active) goto game_start;
 
         /* Curtain entre ciclos */
         curtain_wipe();
+
+        /* Restaurar thirds 1-2 desde g_tiles para el logo del próximo ciclo */
+        tiles_write_range_to_thirds(0x5D, 45, 1);
+        tiles_write_range_to_thirds(0x5D, 45, 2);
     }
 
     /* ======================================================================
