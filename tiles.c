@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include <stdio.h>
 #include "hal.h"
 #include "game.h"
 
@@ -21,7 +20,7 @@ static const struct {
     uint8_t  count;
 } TILE_MAP[] = {
     { 0x00, ROM_ADDR(0x8956), 1 },    /* BLANK */
-    { 0x01, ROM_ADDR(0x9A56), 2 },    /* charset A-B */
+    { 0x01, ROM_ADDR(0x8796), 26 },   /* font A-Z (also used as WALLS at 0x59-0x72) */
     { 0x0D, ROM_ADDR(0x9A76), 1 },    /* DOOR */
     { 0x0E, ROM_ADDR(0x84B6), 28 },   /* BG3 (0x0E-0x29) */
     { 0x27, ROM_ADDR(0x8056), 28 },   /* BG1_MAIN (0x27-0x42) */
@@ -30,7 +29,7 @@ static const struct {
     { 0x51, ROM_ADDR(0x8676), 4 },    /* BG4_A (0x51-0x54) */
     { 0x55, ROM_ADDR(0x86B6), 2 },    /* BG4_B (0x55-0x56) */
     { 0x57, ROM_ADDR(0x86D6), 2 },    /* BG4_C (0x57-0x58) */
-    { 0x59, ROM_ADDR(0x8796), 26 },   /* WALLS (0x59-0x72) */
+    { 0x59, ROM_ADDR(0x8796), 26 },   /* WALLS (0x59-0x72) — same ROM data as font */
     { 0x73, ROM_ADDR(0x89C6), 2 },    /* wall tiles 0x73-0x74 */
     { 0x75, ROM_ADDR(0x8966), 2 },    /* wall tiles 0x75-0x76 */
     { 0x37, ROM_ADDR(0x7F66), 15 },   /* HUD/score (0x37-0x45, overwrites BG0) */
@@ -119,45 +118,7 @@ void tiles_animate(uint8_t frame_counter)
         write_tile_to_vdp(next_src, dst, -1);
 }
 
-/* Escribir un tile de font de 8 bytes (no interleaved) a VRAM y g_tiles */
-static void deploy_font_tile(uint8_t vdp_idx, const uint8_t *pat8)
-{
-    if (vdp_idx >= (uint8_t)TILE_COUNT) return;
-    for (int r = 0; r < 8; r++) {
-        g_tiles[vdp_idx][r * 2]     = pat8[r];
-        g_tiles[vdp_idx][r * 2 + 1] = 0xF1u;
-    }
-    write_tile_to_vdp(vdp_idx, vdp_idx, -1);
-}
 
-void tiles_load_bios_rom(const char *path)
-{
-    if (!path) return;
-
-    FILE *f = fopen(path, "rb");
-    if (!f) return;
-
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size < 0x0800) { fclose(f); return; }
-
-    /* Read MSX1 BIOS charset (256 chars × 8 bytes raw pattern) */
-    unsigned char font[2048];
-    if (fread(font, 1, sizeof(font), f) != sizeof(font)) { fclose(f); return; }
-    fclose(f);
-
-    /* Letters A–Z → tiles 0x01–0x1A (credit tile_base=0x01) */
-    for (uint8_t c = 0x41u; c <= 0x5Au; c++)
-        deploy_font_tile((uint8_t)(c - 0x41u + 0x01u), &font[c * 8u]);
-
-    /* '[' → tile 0x1B */
-    deploy_font_tile(0x1Bu, &font[0x5Bu * 8u]);
-
-    /* Digits 0–9 → tiles 0x1D–0x26 */
-    for (uint8_t c = 0x30u; c <= 0x39u; c++)
-        deploy_font_tile((uint8_t)(c - 0x30u + 0x1Cu + 0x01u), &font[c * 8u]);
-}
 
 uint8_t tiles_vram_idx_blank(void)        { return 0x00u; }
 uint8_t tiles_vram_idx_door(void)         { return 0x0Du; }

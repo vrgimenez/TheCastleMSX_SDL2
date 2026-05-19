@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-05-18 — Z80 char_to_tile match + per-third font loading
+
+### Fixed
+
+- **title.c / camera.c** (`char_to_tile`): Now matches the Z80 original exactly:
+  `chr - 0x30 + 0x5D` for ALL characters ≥ 0x30 (both digits and letters). The
+  old formula `chr - 0x30 + 0x1C + tile_base` was incorrect — the Z80's
+  `RET NC` after `ADD 0x5D` means the letter path (`SUB 0x41, ADD C`) is ONLY
+  reached for chr < 0x30 (punctuation). This means:
+  - `'0'..'9'` → VRAM **0x5D..0x66**
+  - `'A'..'Z'` → VRAM **0x6E..0x87**
+
+- **title.c**: Added `load_credit_digit_tiles()` — loads digit tile patterns
+  from ROM **0x86F6** (same data as ANIM_BG) to VRAM 0x5D-0x66 in thirds 1-2 only.
+
+- **title.c**: Added `load_credit_font_tiles()` — loads font letter patterns
+  from ROM **0x8796** (same data as WALLS) to VRAM 0x6E-0x87 in thirds 1-2 only.
+
+- **title.c** (`title_screen`): Calls both loading functions after
+  `load_title_border_tiles()` so credit text renders correctly in thirds 1-2
+  while third 0 retains WALLS data at the same VRAM indices.
+
+- **tiles.c**: Removed embedded `FONT_DIGITS` const arrays (tiles 0x1B, 0x1D-0x26)
+  — digits now come from ROM 0x86F6 to the correct Z80-mapped positions 0x5D-0x66.
+
+- **main.c / game.h**: Removed `tiles_load_bios_rom()` — no external
+  `msxbios.rom` needed. All tiles come from the game ROM.
+
+### Changed
+
+- **AGENTS.md**: Updated char_to_tile docs, added per-third credit tile map,
+  documented digit source (ROM 0x86F6), removed BIOS font references.
+
 ## 2026-05-17 — Title screen VRAM fix + BIOS font + char encoding
 
 ### Added

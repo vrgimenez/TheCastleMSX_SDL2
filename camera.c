@@ -608,10 +608,10 @@ void camera_draw_string(uint8_t col, uint8_t row,
         uint8_t tile;
         if (byte == 0x20u) {
             tile = 0u;  /* espacio */
-        } else if (byte >= 0x30u && byte < 0x3Au) {
-            tile = (uint8_t)(byte - 0x30u + 0x1Cu + tile_base);  /* dígito */
+        } else if (byte >= 0x30u) {
+            tile = (uint8_t)(byte - 0x30u + 0x5Du);  /* Z80: chr - 0x30 + 0x5D */
         } else {
-            tile = (uint8_t)(byte - 0x41u + tile_base);  /* letra */
+            tile = (uint8_t)(byte - 0x41u + tile_base);  /* fallthrough chr < 0x30 */
         }
 
         /* Escribir tile en la name table */

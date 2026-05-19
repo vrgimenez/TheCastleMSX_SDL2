@@ -120,23 +120,23 @@ static void vdp_clear_row(uint8_t row)
 }
 
 /* ==========================================================================
- * sub_62B0 — Codificación de carácter a tile (igual que en room.c / camera.c)
+ * sub_62B0 — Codificación de carácter a tile (Z80 match)
  *
  * 0x20 = espacio → tile 0
- * 0x30-0x39 = dígito → tile = (byte - 0x30) + 0x1C + tile_base
- *                    (Z80: SUB 0x30; ADD 0x5D; FALL THROUGH: SUB 0x41; ADD C)
- * otro → tile = byte - 0x41 + tile_base
+ * 0x30+ = cualquier carácter (dígito o letra) → tile = chr - 0x30 + 0x5D
+ *                    (Z80: SUB 0x30; ADD 0x5D; RET NC)
+ * otro → tile = chr - 0x41 + tile_base (fallthrough para chr < 0x30)
  *
- * Para créditos (tile_base = 0x01):
- *   'A'..'Z' → tiles 0x01..0x1A
- *   '['      → tile 0x1B
- *   '0'..'9' → tiles 0x1D..0x26
+ * Mapa de créditos (thirds 1-2):
+ *   '0'..'9' → tiles 0x5D..0x66
+ *   'A'..'Z' → tiles 0x6E..0x87
+ *   '['      → tile 0x88
  * ========================================================================== */
 static uint8_t char_to_tile(uint8_t chr, uint8_t tile_base)
 {
+    (void)tile_base;
     if (chr == 0x20u) return 0x00u;
-    if (chr >= 0x30u && chr < 0x3Au)
-        return (uint8_t)(chr - 0x30u + 0x1Cu + tile_base);
+    if (chr >= 0x30u) return (uint8_t)(chr - 0x30u + 0x5Du);
     return (uint8_t)(chr - 0x41u + tile_base);
 }
 
@@ -226,6 +226,56 @@ static void load_title_border_tiles(void)
     for (uint8_t i = 0u; i < 4u; i++) {
         uint8_t idx = (uint8_t)(0x73u + i);
         for (int t = 0; t < 3; t++) {
+            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            for (int r = 0; r < 8; r++) {
+                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
+                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
+            }
+        }
+    }
+}
+
+/* ==========================================================================
+ * Cargar tiles de dígitos (ROM 0x86F6) a VRAM 0x5D-0x66 en thirds 1-2
+ *
+ * El Z80 char_to_tile mapea '0'..'9' → VRAM 0x5D..0x66.
+ * Los dígitos están almacenados en ROM 0x86F6 (mismos datos que ANIM_BG
+ * cargados a g_tiles[0x47-0x50]). Cargamos a VRAM en thirds 1-2 para los
+ * créditos.
+ * ========================================================================== */
+#define ROM_DIGIT_TILES  0x86F6u
+#define ROM_FONT_TILES   0x8796u
+
+static void load_credit_digit_tiles(void)
+{
+    uint32_t foff = ROM_DIGIT_TILES - 0x4000u;
+    for (uint8_t i = 0u; i < 10u; i++) {
+        uint8_t idx = (uint8_t)(0x5Du + i);
+        for (int t = 1; t <= 2; t++) {
+            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
+            for (int r = 0; r < 8; r++) {
+                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
+                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
+            }
+        }
+    }
+}
+
+/* ==========================================================================
+ * Cargar tiles de letras (ROM 0x8796) a VRAM 0x6E-0x87 en thirds 1-2
+ *
+ * El Z80 char_to_tile mapea 'A'..'Z' → VRAM 0x6E..0x87.
+ * Las letras están en ROM 0x8796 (mismo data que font y WALLS).
+ * Cargamos a VRAM en thirds 1-2 para los créditos.
+ * ========================================================================== */
+static void load_credit_font_tiles(void)
+{
+    uint32_t foff = ROM_FONT_TILES - 0x4000u;
+    for (uint8_t i = 0u; i < 26u; i++) {
+        uint8_t idx = (uint8_t)(0x6Eu + i);
+        for (int t = 1; t <= 2; t++) {
             uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
             uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
             for (int r = 0; r < 8; r++) {
@@ -658,6 +708,12 @@ void title_screen(void)
     /* Sobreescribir 0x73-0x76 con borde decorativo desde ROM
      * (g_tiles[0x73-0x76] son variantes de pared de juego, no el borde del título) */
     load_title_border_tiles();
+
+    /* Cargar dígitos (ROM 0x86F6) a VRAM 0x5D-0x66 en thirds 1-2
+     * y letras (ROM 0x8796) a VRAM 0x6E-0x87 en thirds 1-2
+     * para que char_to_tile (Z80: chr - 0x30 + 0x5D) funcione en créditos */
+    load_credit_digit_tiles();
+    load_credit_font_tiles();
 
     /* Silencio durante la pantalla de título */
     music_stop();

@@ -60,7 +60,6 @@ extern uint32_t       g_rom_size;  /* tamaño del buffer                      */
 void    tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
 void    tiles_reload_all(void);
 void    tiles_reload_walls_and_anim(void);
-void    tiles_load_bios_rom(const char *path);
 void    tiles_animate(uint8_t frame_counter);
 uint8_t tiles_vram_idx_blank(void);
 uint8_t tiles_vram_idx_door(void);
