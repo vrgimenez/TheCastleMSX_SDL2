@@ -598,6 +598,10 @@ static bool title_wait_for_input(void)
  * ========================================================================== */
 static void intro_prepare_vram(void)
 {
+    /* Limpiar HUD area (rows 0-3) antes de título */
+    /* (curtain_wipe solo limpia rows 4-23) */
+    hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, (uint16_t)(4u * 32u));
+
     curtain_wipe();
 
     /* Limpiar pattern/color table desde offset 0x400 (tercios 2 y 3) */
@@ -703,6 +707,9 @@ void title_screen(void)
 
     /* Bucle de 3 ciclos */
     for (uint8_t cycle = 0u; cycle < DEMO_CYCLES; cycle++) {
+
+        /* Limpiar HUD area (rows 0-3) antes del logo */
+        hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, (uint16_t)(4u * 32u));
 
         /* Fase 1: logo animado */
         if (!title_animate_logo()) goto game_start;

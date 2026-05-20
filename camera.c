@@ -577,6 +577,126 @@ void render_background(void)
 }
 
 /* ==========================================================================
+ * hud_fill_rect — Escribe rectángulo de tiles con incremento
+ *
+ * Replica sub_64C3: Escribe tile start_tile + col en cada columna,
+ * reiniciando por fila. start_tile=0 → escribe 0s (blanco).
+ *
+ *   col/row = posición inicial en name table
+ *   width/height = dimensiones del rectángulo
+ *   start_tile = tile base
+ *
+ * Mapeo de tiles (pattern table 0x00-0x72, tercio 0, no cambia):
+ *   0x00 blank  0x01-0C llaves  0x0D corazón
+ *   0x0E-29 mapa  0x2A-45 logo  0x46 línea vertical
+ *   0x47-50 dígitos 0-9  0x51 "Hi"  0x52-54 "SCORE"
+ *   0x55-56 "Key"  0x57-58 "Life"  0x59-72 letras A-Z
+ * ========================================================================== */
+static void hud_fill_rect(uint8_t col, uint8_t row,
+                          uint8_t width, uint8_t height,
+                          uint8_t start_tile)
+{
+    for (uint8_t r = 0u; r < height; r++) {
+        uint16_t base = (uint16_t)(VRAM_NAME_BASE
+                      + (uint16_t)(row + r) * 32u + col);
+        uint8_t tile = start_tile;
+        for (uint8_t c = 0u; c < width; c++) {
+            hal_vdp_write_vram((uint16_t)(base + c),
+                               (start_tile == 0u) ? 0u : tile);
+            if (start_tile != 0u) tile++;
+        }
+    }
+}
+
+void draw_hud(void)
+{
+    uint16_t base1, base2;
+
+    /* --- Static HUD (replicando Z80 sub_4E0C + sub_64C3 ×5) --- */
+
+    /* 1) MAP area: 7×4 rectángulo en col 17, row 0, tiles 0x0E-0x29 */
+    hud_fill_rect(17u, 0u, 7u, 4u, 0x0Eu);
+
+    /* 2) LOGO area: 7×4 rectángulo en col 24, row 0, tiles 0x2A-0x45 */
+    hud_fill_rect(24u, 0u, 7u, 4u, 0x2Au);
+
+    /* 3) Separador vertical: col 31, rows 0-3, tile 0x46 (sub_4ECA) */
+    {
+        uint16_t addr = (uint16_t)(VRAM_NAME_BASE + 31u);
+        hal_vdp_write_vram(addr, 0x46u);
+        hal_vdp_write_vram((uint16_t)(addr + 32u), 0x46u);
+        hal_vdp_write_vram((uint16_t)(addr + 64u), 0x46u);
+        hal_vdp_write_vram((uint16_t)(addr + 96u), 0x46u);
+    }
+
+    /* 4) "SCORE" label: col 1, row 0, tiles 0x52-0x54 (3×1) */
+    hud_fill_rect(1u, 0u, 3u, 1u, 0x52u);
+
+    /* 5) "Hi SCORE" label: col 9, row 0, tiles 0x51-0x54 (4×1) */
+    hud_fill_rect(9u, 0u, 4u, 1u, 0x51u);
+
+    /* 6) "Key" label: col 1, row 2, tiles 0x55-0x56 (2×1) */
+    hud_fill_rect(1u, 2u, 2u, 1u, 0x55u);
+
+    /* 7) "Life" label: col 1, row 3, tiles 0x57-0x58 (2×1) */
+    hud_fill_rect(1u, 3u, 2u, 1u, 0x57u);
+
+    /* --- Blank rows 1-2 left area (no longer using static arrays) --- */
+    /* Rows 1-2, cols 0-16 are already 0 from VRAM init. We only
+     * overwrite the dynamic positions below. */
+
+    /* --- Dynamic overlays --- */
+
+    base1 = (uint16_t)(VRAM_NAME_BASE + 1u * 32u);
+    base2 = (uint16_t)(VRAM_NAME_BASE + 2u * 32u);
+
+    /* Score digits: row 1 cols 19-21, row 2 cols 19-21 */
+    {
+        uint8_t s2 = g_score[2];
+        hal_vdp_write_vram((uint16_t)(base1 + 19u),
+                           (uint8_t)(0x47u + ((s2 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base1 + 20u),
+                           (uint8_t)(0x47u + (s2 & 0x0Fu)));
+        uint8_t s1 = g_score[1];
+        hal_vdp_write_vram((uint16_t)(base1 + 21u),
+                           (uint8_t)(0x47u + ((s1 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base2 + 19u),
+                           (uint8_t)(0x47u + (s1 & 0x0Fu)));
+        uint8_t s0 = g_score[0];
+        hal_vdp_write_vram((uint16_t)(base2 + 20u),
+                           (uint8_t)(0x47u + ((s0 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base2 + 21u),
+                           (uint8_t)(0x47u + (s0 & 0x0Fu)));
+    }
+
+    /* Key icons: row 2 col 3+ (0x01-0x0C) */
+    {
+        extern uint8_t doors_keys_collected(void);
+        uint8_t keys = doors_keys_collected();
+        uint8_t kc = 0u;
+        for (uint8_t k = keys; k != 0u; k >>= 1u) { if (k & 1u) kc++; }
+        for (uint8_t i = 0u; i < kc && i < 12u; i++) {
+            hal_vdp_write_vram((uint16_t)(base2 + 3u + i),
+                               (uint8_t)(0x01u + i));
+        }
+    }
+
+    /* Life hearts: row 3 col 3+ (tile 0x0D)
+     * Muestra vidas EXTRA (g_lives-1) — la vida actual no cuenta */
+    {
+        uint16_t base3 = (uint16_t)(VRAM_NAME_BASE + 3u * 32u);
+        uint8_t lives = (g_lives > 0u) ? (uint8_t)(g_lives - 1u) : 0u;
+        if (lives > 6u) lives = 6u;
+        for (uint8_t i = 0u; i < lives; i++) {
+            hal_vdp_write_vram((uint16_t)(base3 + 3u + i), 0x0Du);
+        }
+    }
+
+    /* Map/logo tiles at cols 17-30 for rows 1-2 already written by
+     * hud_fill_rect above — no need to re-write. */
+}
+
+/* ==========================================================================
  * sub_629D — Render de cadena de texto (llamada 8×)
  *
  * Entrada: H=col inicial, L=row, DE=puntero a cadena ASCII en ROM

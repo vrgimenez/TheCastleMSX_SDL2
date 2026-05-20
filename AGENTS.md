@@ -62,3 +62,34 @@ cmake --build build --config Release
 ```
 
 MSVC flags: `/W4 /WX- /wd4996`. GCC/Clang: `-Wall -Wextra -Wno-unused-parameter -Wno-unused-function`.
+
+## HUD Tile Mapping (Pattern Table 0x00-0x72)
+
+| Range | Count | Description |
+|-------|-------|-------------|
+| 0x00 | 1 | Blank |
+| 0x01-0x0C | 12 | Key icons |
+| 0x0D | 1 | Heart (life icon) |
+| 0x0E-0x29 | 28 | Map graphic (7×4) |
+| 0x2A-0x45 | 28 | Logo graphic (7×4, not title screen 14×5) |
+| 0x46 | 1 | Vertical separator line (col 31, all 4 rows) |
+| 0x47-0x50 | 10 | Digits 0-9 (ANIM_BG) |
+| 0x51 | 1 | "Hi" label (HiScore) |
+| 0x52-0x54 | 3 | "SCORE" label |
+| 0x55-0x56 | 2 | "Key" label |
+| 0x57-0x58 | 2 | "Life" label |
+| 0x59-0x72 | 26 | Letters A-Z (WALLS/font, used as dynamic overlays) |
+
+**Name table layout (rows 0-3):**
+- Row 0: `blk SCORE blk blk blk Hi SCORE blk blk blk blk [MAP row 1] [LOGO row 1] |`
+- Row 1: `blk ... [MAP row 2] *NN* *OO* [MAP end] [LOGO row 2] |`
+- Row 2: `blk Key ... [MAP row 3] *MM* *AA* *PP* [MAP end] [LOGO row 3] |`
+- Row 3: `blk Life ... [MAP row 4] [LOGO row 4] |`
+
+**`draw_hud()` in camera.c** now replicates Z80 sub_4E0C + sub_64C3 logic:
+- `hud_fill_rect()` = sub_64C3: writes incrementing tiles to a rectangle
+- Calls in order: MAP(17,0,7,4,0x0E), LOGO(24,0,7,4,0x2A), separator col31 rows0-3, SCORE(1,0,3,1,0x52), HiSCORE(9,0,4,1,0x51), Key(1,2,2,1,0x55), Life(1,3,2,1,0x57)
+- Then dynamic overlays: 6 score digits using 0x47-0x50, key icons 0x01-0x0C at row2 col3+, hearts 0x0D at row3 col3+
+- Tiles 0x00-0x72 in **tercio 0 never change** — loaded once from ROM via TILE_MAP
+
+**Init order:** `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`

@@ -623,6 +623,10 @@ void room_transition(void)
     /* Limpiar flag de salida */
     g_room_exit    = 0;
     g_restart_flag = 0;
+
+    /* Dibujar HUD */
+    extern void draw_hud(void);
+    draw_hud();
 }
 
 /* ==========================================================================
@@ -664,6 +668,10 @@ void room_load_initial(void)
     g_cursor_row    = 0;
     g_script_caps   = 0;
     g_restart_flag  = 0;
+
+    /* Dibujar HUD */
+    extern void draw_hud(void);
+    draw_hud();
 }
 
 /* ==========================================================================

@@ -135,6 +135,7 @@ void camera_init(void);
 void camera_update(void);
 void scroll_update(void);
 void render_background(void);
+void draw_hud(void);
 void camera_draw_string(uint8_t col, uint8_t row, uint16_t rom_str_addr,
                         uint8_t tile_base, uint8_t delay_frames);
 extern uint8_t g_music_transpose_fine;

@@ -229,7 +229,8 @@ void game_frame(void)
     /* check_door_exit (sub_4499) */
     check_door_exit();
 
-    /* update HUD (sub_5A2D) — placeholder */
+    /* update HUD (sub_5A2D) */
+    draw_hud();
 
     /* check game over */
     if (g_game_over) return;
