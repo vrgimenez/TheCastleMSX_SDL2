@@ -250,25 +250,8 @@ static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
         case 0x7BD8: base_addr = 0x9A96; break;  /* DOOR_EXTRA */
         default:     base_addr = rom_rw(ts_desc_addr); break;
     }
-    for (uint8_t i = 0; i < count; i++) {
-        uint16_t tile_src = (uint16_t)(base_addr + (uint16_t)i * 16u);
-        uint8_t  tile_idx = (uint8_t)(vram_start + i);
-        int thirds = all_thirds ? 3 : 1;
-        for (int t = 0; t < thirds; t++) {
-            uint16_t pat = (uint16_t)(VRAM_PATTERN_BASE
-                           + (uint16_t)t * VRAM_THIRD_SIZE
-                           + (uint16_t)tile_idx * 8u);
-            uint16_t col = (uint16_t)(VRAM_COLOR_BASE
-                           + (uint16_t)t * VRAM_THIRD_SIZE
-                           + (uint16_t)tile_idx * 8u);
-            for (uint8_t row = 0; row < 8u; row++) {
-                hal_vdp_write_vram((uint16_t)(pat + row),
-                                   rom_rb((uint16_t)(tile_src + row * 2u)));
-                hal_vdp_write_vram((uint16_t)(col + row),
-                                   rom_rb((uint16_t)(tile_src + row * 2u + 1u)));
-            }
-        }
-    }
+    int first_tercio = all_thirds ? 0 : 1;
+    tiles_rom_to_vram(base_addr, vram_start, count, first_tercio);
 }
 
 /* ==========================================================================
