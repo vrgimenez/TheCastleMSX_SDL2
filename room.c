@@ -239,7 +239,7 @@ extern void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
  * Los descriptores 0x7BC8+ usan formato compacto (solo byte bajo) y requieren
  * que el byte alto se determine por contexto. */
 static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
-                         uint8_t count, bool all_thirds)
+                         uint8_t count)
 {
     uint16_t base_addr;
     switch (ts_desc_addr) {
@@ -250,8 +250,7 @@ static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
         case 0x7BD8: base_addr = 0x9A96; break;  /* DOOR_EXTRA */
         default:     base_addr = rom_rw(ts_desc_addr); break;
     }
-    int first_tercio = all_thirds ? 0 : 1;
-    tiles_rom_to_vram(base_addr, vram_start, count, first_tercio);
+    tiles_rom_to_vram(base_addr, vram_start, count);
 }
 
 /* ==========================================================================
@@ -268,16 +267,9 @@ static void room_full_load(void)
     /* Paso 3: recargar WALLS (28) + ANIM_BG (10) */
     tiles_reload_walls_and_anim();
 
-    /* Paso 4: cargar tileset extra (tercios 1 y 2 de BG1_MAIN: DE=0x0127) */
-    /*   sub_4E91: LD HL,0x7BC2, B=0x1C (28 tiles) → tercio 1+2 */
-    load_tileset(ROM_TS_BG1_MAIN, 0x27u, 28u, false);  /* tercio 1 */
-    /* sub_549D carga con HL×8+DE en VRAM vía RDSLT — aproximamos */
-
-    /* Paso 5: cargar sprites de puerta extra (0x7BD8, B=0x10=16 tiles) */
-    load_tileset(ROM_TS_DOOR_EXTRA, 0x9Fu, 16u, true);
-
-    /* Paso 6: cargar sprite de puerta (0x7BD4, B=1) */
-    load_tileset(ROM_TS_DOOR, 0x0Du, 1u, true);
+    load_tileset(ROM_TS_BG1_MAIN, 0x27u, 28u);
+    load_tileset(ROM_TS_DOOR_EXTRA, 0x9Fu, 16u);
+    load_tileset(ROM_TS_DOOR, 0x0Du, 1u);
 
     /* Paso 7: inicializar contadores de animación */
     g_anim_ctr[0] = 0x72u;   /* (0xEA66) = 0xAF en sub_5382 original */

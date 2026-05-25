@@ -59,12 +59,11 @@ extern uint32_t       g_rom_size;  /* tamaño del buffer                      */
 /* --- tiles.c --- */
 void    tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
 void    tiles_rom_to_vram(uint32_t rom_file_off, uint8_t vram_start,
-                          uint8_t count, int first_tercio);
+                          uint8_t count);
 void    tiles_vram_from_rom(uint32_t rom_file_off, uint8_t vram_start,
-                            uint8_t count, int first_tercio);
+                            uint8_t count);
 void    tiles_reload_all(void);
 void    tiles_reload_walls_and_anim(void);
-void    tiles_write_range_to_thirds(uint8_t start_idx, uint8_t count, int third);
 void    tiles_animate(uint8_t frame_counter);
 void    tiles_dump_vram(const char *label);
 uint8_t tiles_vram_idx_blank(void);

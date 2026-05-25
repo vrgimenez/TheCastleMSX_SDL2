@@ -14,7 +14,7 @@ Port of **The Castle** (ASCII, 1986) from MSX Z80 assembly to pure C99 with SDL2
  | Enemy AI (roller, bat) | ✅ | Full movement, patterns, drawing |
  | Doors + collectibles + traps | ✅ | 5 object types, key system, spike traps |
  | Particles + effects | ✅ | Spark, death, trap-bat animations |
- | Music engine + PSG | ✅ | Full note/period table, tempo, SFX volumes |
+ | Music engine + PSG | ✅ | Full note/period table, tempo, SFX volumes — game music fixed |
  | Tile loading from ROM | ✅ | All tiles mapped — flat g_bg_tiles[256][16] |
  | Overlay tile arrays | ✅ | Font, digits, logo, HUD elements from ROM |
  | Screen compositor | ✅ | g_screen_buf[24][32] + g_bg_tiles renderer |

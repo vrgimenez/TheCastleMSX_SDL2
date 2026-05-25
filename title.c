@@ -67,12 +67,12 @@
 /* Dirección de las tablas de datos del intro en ROM */
 #define ROM_LOGO_SEQ1   0x56D4u   /* espiral exterior del logo          */
 #define ROM_LOGO_SEQ2   0x5738u   /* núcleo interior del logo           */
-#define ROM_CREDIT_1    0x567Fu   /* primer strip de créditos           */
-#define ROM_CREDIT_2    0x5694u   /* segundo strip                      */
-#define ROM_CREDIT_3    0x56ABu   /* tercer strip                       */
-#define ROM_CREDIT_4    0x56B5u   /* cuarto strip                       */
-#define ROM_CREDIT_5    0x56B8u   /* quinto strip                       */
-#define ROM_GAME_MUSIC  0x7ABEu   /* puntero de música de juego en ROM  */
+#define ROM_CREDIT_1    0x567Fu   /* "[ 1985  ISAO YOSHIDA"  */
+#define ROM_CREDIT_2    0x5694u   /* "[ 1986 KEISUKE IWAKURA" */
+#define ROM_CREDIT_3    0x56ABu   /* "PRESENTED"              */
+#define ROM_CREDIT_4    0x56B5u   /* "BY"                     */
+#define ROM_CREDIT_5    0x56B8u   /* "ASCII CORPORATION"      */
+#define ROM_GAME_MUSIC  0x7ABEu   /* demo AI keyframes + demo music ptr  */
 
 /* Sentinel y terminadores */
 #define SEQ_END   0x80u   /* fin de secuencia de coordenadas */
@@ -123,7 +123,7 @@ static void vdp_clear_row(uint8_t row)
  *                    (Z80: SUB 0x30; ADD 0x5D; RET NC)
  * otro → tile = chr - 0x41 + tile_base (fallthrough para chr < 0x30)
  *
- * Mapa de créditos (thirds 1-2):
+ * Credit character → tile encoding:
  *   '0'..'9' → tiles 0x5D..0x66
  *   'A'..'Z' → tiles 0x6E..0x87
  *   '['      → tile 0x88
@@ -208,38 +208,13 @@ static void curtain_wipe(void)
     }
 }
 
-/* ==========================================================================
- * Cargar tiles desde ROM a VRAM para la pantalla de título.
- *
- * Después de intro_prepare_vram (que limpia tercios 1-2 y tiles 0x80+ de
- * tercio 0), necesitamos restaurar los tiles del logo + cargas específicas
- * para créditos en tercios 1-2.
- *
- * BG1_MAIN (70 tiles @ ROM 0x8056) → tercia 0-2, VRAM 0x73-0xB8
- *   Tiles 0-3 (0x8056): borde decorativo → VRAM 0x73-0x76
- *   Tiles 4-69 (0x8096): cuerpo del logo → VRAM 0x77-0xB8
- *
- * Para tercios 1-2 se cargan además:
- *   Letras A-Z  (28 tiles @ 0x8796) → VRAM 0x01-0x1C
- *   Dígitos 0-9 (10 tiles @ 0x86F6) → VRAM 0x1D-0x26
- *   Texto de crédito (0x5D-0x66 = digitos, 0x6E-0x89 = letras)
- * ========================================================================== */
 static void load_title_tiles(void)
 {
-    /* BG1_MAIN completo (logo + borde) a los 3 tercios */
-    tiles_vram_from_rom(0x8056u, 0x73u, 70u, 0);
-
-    /* Letras A-Z + 2 símbolos a tercios 1-2 en 0x01-0x1C */
-    tiles_vram_from_rom(0x8796u, 0x01u, 28u, 1);
-
-    /* Dígitos a tercios 1-2 en 0x1D-0x26 */
-    tiles_vram_from_rom(0x86F6u, 0x1Du, 10u, 1);
-
-    /* Dígitos de crédito a tercios 1-2 en 0x5D-0x66 */
-    tiles_vram_from_rom(0x86F6u, 0x5Du, 10u, 1);
-
-    /* Letras de crédito a tercios 1-2 en 0x6E-0x89 */
-    tiles_vram_from_rom(0x8796u, 0x6Eu, 28u, 1);
+    tiles_vram_from_rom(0x8056u, 0x73u, 70u);
+    tiles_vram_from_rom(0x8796u, 0x01u, 28u);
+    tiles_vram_from_rom(0x86F6u, 0x1Du, 10u);
+    tiles_vram_from_rom(0x86F6u, 0x5Du, 10u);
+    tiles_vram_from_rom(0x8796u, 0x6Eu, 28u);
 }
 
 /* ==========================================================================
@@ -494,18 +469,18 @@ static bool scroll_credit_strip(uint8_t row, uint8_t target_col,
  * sub_4C0B — Animar los 5 strips de créditos (fase 2)
  *
  * Z80: BC=(target_col, row), DE=string_addr
- *   Strip 1: BC=0x060E, DE=0x567F  → row=14, target_col=6
- *   Strip 2: BC=0x0510, DE=0x5694  → row=16, target_col=5
- *   Strip 3: BC=0x0C12, DE=0x56AB  → row=18, target_col=12
- *   Strip 4: BC=0x0F14, DE=0x56B5  → row=20, target_col=15
- *   Strip 5: BC=0x0816, DE=0x56B8  → row=22, target_col=8
+ *   Strip 1: BC=0x060E, DE=0x567F  → row=14, col=6  → "[ 1985  ISAO YOSHIDA"
+ *   Strip 2: BC=0x0510, DE=0x5694  → row=16, col=5  → "[ 1986 KEISUKE IWAKURA"
+ *   Strip 3: BC=0x0C12, DE=0x56AB  → row=18, col=12 → "PRESENTED"
+ *   Strip 4: BC=0x0F14, DE=0x56B5  → row=20, col=15 → "BY"
+ *   Strip 5: BC=0x0816, DE=0x56B8  → row=22, col=8  → "ASCII CORPORATION"
  * ========================================================================== */
 static const struct { uint8_t row; uint8_t target_col; uint16_t addr; } CREDIT_STRIPS[5] = {
-    { 0x0E, 0x06, ROM_CREDIT_1 },
-    { 0x10, 0x05, ROM_CREDIT_2 },
-    { 0x12, 0x0C, ROM_CREDIT_3 },
-    { 0x14, 0x0F, ROM_CREDIT_4 },
-    { 0x16, 0x08, ROM_CREDIT_5 },
+    { 0x0E, 0x06, ROM_CREDIT_1 },   /* "[ 1985  ISAO YOSHIDA"  */
+    { 0x10, 0x05, ROM_CREDIT_2 },   /* "[ 1986 KEISUKE IWAKURA" */
+    { 0x12, 0x0C, ROM_CREDIT_3 },   /* "PRESENTED"              */
+    { 0x14, 0x0F, ROM_CREDIT_4 },   /* "BY"                     */
+    { 0x16, 0x08, ROM_CREDIT_5 },   /* "ASCII CORPORATION"      */
 };
 
 static bool title_animate_credits(void)
@@ -643,12 +618,9 @@ void title_screen(void)
     /* sub_4AE2: preparar VRAM */
     intro_prepare_vram();
 
-    /* Recargar tercio 0 desde g_tiles (intro_prepare_vram limpió tiles 0x80+
-     * del tercio 0, incluyendo el logo 0x80-0xB8) */
     tiles_reload_all();
 
-    /* Cargar logo + borde a los 3 tercios, y font/dígitos de crédito a
-     * tercios 1-2 desde ROM directamente */
+    /* Cargar logo, font y dígitos de crédito desde ROM */
     load_title_tiles();
 
     tiles_dump_vram("title_init");
@@ -666,8 +638,7 @@ void title_screen(void)
         if (!title_animate_logo()) goto game_start;
         if (!g_intro_active) goto game_start;
 
-        /* Fase 2: créditos en scroll (usa tercios 1-2 con font/dígitos
-         * ya cargados por load_title_tiles()) */
+        /* Fase 2: créditos en scroll (font/dígitos cargados por load_title_tiles) */
         if (!title_animate_credits()) goto game_start;
         if (!g_intro_active) goto game_start;
 

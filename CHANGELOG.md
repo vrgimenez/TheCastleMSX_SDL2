@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-05-25 — Per-third cleanup + music fix + credit strip comments
+
+### Fixed
+
+- **music.c** (`music_play_game`): Game music data now loaded from `0x7A73`
+  (channel A) and `0x7A8F` (channel B) instead of `0x7ABE` — `0x7ABE` contains
+  demo AI keyframe data, not music.
+
+- **tiles.c**: Removed all `-Wtype-limits` warnings from `TILES_PER_TERCIO`:
+  bounds checks comparing `uint8_t` against `256` were always true/false.
+
+### Changed
+
+- **tiles.c**: `TILES_PER_TERCIO`, `VRAM_THIRD_SIZE` defines removed. All
+  VRAM write functions (`write_tile_to_vdp`, `tiles_rom_to_vram`,
+  `tiles_vram_from_rom`) no longer take per-third parameters — single flat
+  write only. Removed `tiles_write_range_to_thirds()` (unused).
+  `tiles_dump_vram()` simplified (no per-third dump).
+
+- **game.h**: Updated declarations for `tiles_rom_to_vram`,
+  `tiles_vram_from_rom`; removed `tiles_write_range_to_thirds`.
+
+- **room.c** (`load_tileset`): Removed `all_thirds` parameter.
+
+- **room.c**, **title.c**: All callers updated, per-third comments cleaned up.
+
+- **title.c**: CREDIT_STRIPS defines, array, and comments now include the
+  decoded text: `[ 1985  ISAO YOSHIDA`, `[ 1986 KEISUKE IWAKURA`,
+  `PRESENTED`, `BY`, `ASCII CORPORATION`.
+
 ## 2026-05-24 — Flat tile architecture + screen compositor + SDL_MapRGB palette
 
 ### Added

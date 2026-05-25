@@ -459,7 +459,7 @@ void music_play_title(void)
 
 void music_play_game(void)
 {
-    music_load(0x7ABEu, 0u);
+    music_load(0x7A73u, 0x7A8Fu);
     music_set_tempo(0x04u, 0x00u);
     music_set_transpose(0u, 0u);
 }
