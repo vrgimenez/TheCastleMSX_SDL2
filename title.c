@@ -211,8 +211,6 @@ static void curtain_wipe(void)
 static void load_title_tiles(void)
 {
     tiles_vram_from_rom(0x8056u, 0x73u, 70u);
-    tiles_vram_from_rom(0x8796u, 0x01u, 28u);
-    tiles_vram_from_rom(0x86F6u, 0x1Du, 10u);
     tiles_vram_from_rom(0x86F6u, 0x5Du, 10u);
     tiles_vram_from_rom(0x8796u, 0x6Eu, 28u);
 }
@@ -623,6 +621,8 @@ void title_screen(void)
     /* Cargar logo, font y dígitos de crédito desde ROM */
     load_title_tiles();
 
+    draw_hud();
+
     tiles_dump_vram("title_init");
 
     /* Silencio durante la pantalla de título */
@@ -630,9 +630,6 @@ void title_screen(void)
 
     /* Bucle de 3 ciclos */
     for (uint8_t cycle = 0u; cycle < DEMO_CYCLES; cycle++) {
-
-        /* Limpiar HUD area (rows 0-3) antes del logo */
-        hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, (uint16_t)(4u * 32u));
 
         /* Fase 1: logo animado */
         if (!title_animate_logo()) goto game_start;
