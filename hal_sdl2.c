@@ -15,6 +15,7 @@
 
 #include "hal.h"
 #include "game.h"
+#include "screen.h"
 
 #include <SDL2/SDL.h>
 #include <stdint.h>
@@ -172,6 +173,17 @@ bool hal_init(bool pal_timing)
         fprintf(stderr, "SDL_CreateTexture: %s\n", SDL_GetError());
         return false;
     }
+    {
+        Uint32 fmt;
+        SDL_QueryTexture(texture, &fmt, NULL, NULL, NULL);
+        SDL_PixelFormat *pf = SDL_AllocFormat(fmt);
+        if (pf) {
+            for (int i = 0; i < 16; i++)
+                g_palette[i] = SDL_MapRGB(pf,
+                    TMS_PALETTE[i][0], TMS_PALETTE[i][1], TMS_PALETTE[i][2]);
+            SDL_FreeFormat(pf);
+        }
+    }
 
     /* Escalado pixelado (sin blur) */
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
@@ -324,6 +336,7 @@ void hal_vdp_write_reg(uint8_t reg, uint8_t val)
 {
     if (reg >= 8) return;
     vdp_reg[reg] = val;
+    if (reg == 7) screen_set_border(val & 0x0Fu);
     update_vdp_addresses();
 }
 
@@ -333,18 +346,61 @@ void hal_vdp_write_reg(uint8_t reg, uint8_t val)
 
 void hal_vdp_write_vram(uint16_t addr, uint8_t val)
 {
-    vram[addr & (VRAM_SIZE - 1)] = val;
+    /* Pattern table (0x0000-0x17FF) → g_bg_tiles, ignore third */
+    if (addr < 0x1800u) {
+        uint16_t off = addr % 0x0800u;
+        uint8_t  idx = (uint8_t)(off / 8u);
+        uint8_t  row = (uint8_t)(off % 8u);
+        g_bg_tiles[idx][row * 2u] = val;
+        return;
+    }
+    /* Name table (0x1800-0x1AFF) → g_screen_buf */
+    if (addr >= 0x1800u && addr < 0x1B00u) {
+        uint16_t off = addr - 0x1800u;
+        screen_put((uint8_t)(off % 32u), (uint8_t)(off / 32u), val);
+        return;
+    }
+    /* Color table (0x2000-0x37FF) → g_bg_tiles, ignore third */
+    if (addr >= 0x2000u && addr < 0x3800u) {
+        uint16_t off = (addr - 0x2000u) % 0x0800u;
+        uint8_t  idx = (uint8_t)(off / 8u);
+        uint8_t  row = (uint8_t)(off % 8u);
+        g_bg_tiles[idx][row * 2u + 1u] = val;
+        return;
+    }
+    /* Everything else (sprites, etc.) → vram */
+    vram[addr & (VRAM_SIZE - 1u)] = val;
 }
 
 uint8_t hal_vdp_read_vram(uint16_t addr)
 {
-    return vram[addr & (VRAM_SIZE - 1)];
+    /* Pattern table → g_bg_tiles */
+    if (addr < 0x1800u) {
+        uint16_t off = addr % 0x0800u;
+        uint8_t  idx = (uint8_t)(off / 8u);
+        uint8_t  row = (uint8_t)(off % 8u);
+        return g_bg_tiles[idx][row * 2u];
+    }
+    /* Name table → g_screen_buf */
+    if (addr >= 0x1800u && addr < 0x1B00u) {
+        uint16_t off = addr - 0x1800u;
+        return g_screen_buf[off / 32u][off % 32u];
+    }
+    /* Color table → g_bg_tiles */
+    if (addr >= 0x2000u && addr < 0x3800u) {
+        uint16_t off = (addr - 0x2000u) % 0x0800u;
+        uint8_t  idx = (uint8_t)(off / 8u);
+        uint8_t  row = (uint8_t)(off % 8u);
+        return g_bg_tiles[idx][row * 2u + 1u];
+        return 0;
+    }
+    return vram[addr & (VRAM_SIZE - 1u)];
 }
 
 void hal_vdp_fill_vram(uint16_t addr, uint8_t val, uint16_t count)
 {
     while (count--) {
-        vram[addr & (VRAM_SIZE - 1)] = val;
+        hal_vdp_write_vram(addr, val);
         addr++;
     }
 }
@@ -352,7 +408,7 @@ void hal_vdp_fill_vram(uint16_t addr, uint8_t val, uint16_t count)
 void hal_vdp_copy_to_vram(uint16_t dst, const uint8_t *src, uint16_t count)
 {
     while (count--) {
-        vram[dst & (VRAM_SIZE - 1)] = *src++;
+        hal_vdp_write_vram(dst, *src++);
         dst++;
     }
 }
@@ -360,7 +416,7 @@ void hal_vdp_copy_to_vram(uint16_t dst, const uint8_t *src, uint16_t count)
 void hal_vdp_copy_from_vram(uint16_t src, uint8_t *dst, uint16_t count)
 {
     while (count--) {
-        *dst++ = vram[src & (VRAM_SIZE - 1)];
+        *dst++ = hal_vdp_read_vram(src);
         src++;
     }
 }
@@ -400,78 +456,31 @@ void hal_vdp_clear_sprites(void)
 /* ==========================================================================
  * VDP — RENDERIZADO
  *
- * TMS9918A Screen 2 (Graphics II):
- *   - 32×24 celdas de 8×8 pixels
- *   - Name table: 768 bytes (32×24), cada byte = índice de patrón
- *   - Pattern table: 3 × 256 × 8 bytes (un patrón por cada tercio de pantalla)
- *   - Color table: mismo tamaño; cada byte = color[7:4] ink / color[3:0] paper
- *   - Sprites: 32 entradas de 4 bytes (Y, X, patrón, color+EC)
+ * Ya no se usa VRAM para pattern/color table. El renderizado lee:
+ *   - g_screen_buf[32×24] para los índices de tiles
+ *   - g_bg_tiles[256][16] para los datos de cada tile (formato intercalado)
+ *   - vram[] solo para sprites (attr + pattern)
  * ========================================================================== */
 
 static void vdp_render(void)
 {
-    /* Color de borde (R7 bits[3:0]) */
-    uint8_t border_idx = vdp_reg[7] & 0x0Fu;
-    const uint8_t *bc  = TMS_PALETTE[border_idx];
-    uint32_t border_color = ((uint32_t)bc[0] << 24)
-                          | ((uint32_t)bc[1] << 16)
-                          | ((uint32_t)bc[2] <<  8)
-                          | 0xFFu;
+    /* Format: 0xAABBGGRR for SDL_RGBA8888 on LE */
+    uint32_t border_rgba = g_palette[0];
+    if ((vdp_reg[7] & 0x0Fu)) {
+        border_rgba = g_palette[vdp_reg[7] & 0x0Fu];
+    }
 
-    /* Si la pantalla está apagada, rellenar con el color de borde */
+    /* Screen off: just border */
     if (!(vdp_reg[1] & 0x40u)) {
         for (int i = 0; i < MSX_W * MSX_H; i++)
-            framebuf[i] = border_color;
+            framebuf[i] = border_rgba;
         return;
     }
 
-    /* --- Renderizar fondo tile a tile --- */
-    for (int cell_y = 0; cell_y < 24; cell_y++) {
-        for (int cell_x = 0; cell_x < 32; cell_x++) {
-            /* Índice en name table */
-            uint16_t name_addr = (uint16_t)(vdp_name_base
-                                 + (uint16_t)cell_y * 32
-                                 + (uint16_t)cell_x);
-            uint8_t char_code = vram[name_addr];
+    /* Render background from flat tile arrays */
+    screen_render(framebuf, MSX_W, MSX_H);
 
-            /* En Screen 2 el tercio de pantalla desplaza el patrón:
-             *   filas  0..7  → patrón base 0x0000 + char_code*8
-             *   filas  8..15 → patrón base 0x0800 + char_code*8
-             *   filas 16..23 → patrón base 0x1000 + char_code*8
-             */
-            uint16_t third      = (uint16_t)(cell_y / 8) * 0x0800u;
-            uint16_t pat_addr   = (uint16_t)(vdp_pat_base + third
-                                  + (uint16_t)char_code * 8u);
-            uint16_t color_addr = (uint16_t)(vdp_color_base + third
-                                  + (uint16_t)char_code * 8u);
-
-            /* Dibujar los 8 pixels de cada fila del tile */
-            for (int row = 0; row < 8; row++) {
-                uint8_t pat   = vram[pat_addr   + (uint16_t)row];
-                uint8_t color = vram[color_addr + (uint16_t)row];
-
-                uint8_t ink_idx   = (color >> 4) & 0x0Fu;
-                uint8_t paper_idx = color & 0x0Fu;
-
-                const uint8_t *ink   = TMS_PALETTE[ink_idx   ? ink_idx   : border_idx];
-                const uint8_t *paper = TMS_PALETTE[paper_idx ? paper_idx : border_idx];
-
-                int px_y = cell_y * 8 + row;
-                int px_x = cell_x * 8;
-
-                for (int bit = 7; bit >= 0; bit--) {
-                    const uint8_t *col_ptr = (pat & (1u << bit)) ? ink : paper;
-                    uint32_t rgba = ((uint32_t)col_ptr[0] << 24)
-                                  | ((uint32_t)col_ptr[1] << 16)
-                                  | ((uint32_t)col_ptr[2] <<  8)
-                                  | 0xFFu;
-                    framebuf[px_y * MSX_W + px_x + (7 - bit)] = rgba;
-                }
-            }
-        }
-    }
-
-    /* --- Renderizar sprites encima --- */
+    /* Render sprites on top (still reads from vram[]) */
     vdp_render_sprites();
 }
 
@@ -481,7 +490,6 @@ static void vdp_render_sprites(void)
      * Magnificación (MAG = bit 0 de R1) dobla el tamaño. */
     bool size16 = (vdp_reg[1] & 0x02u) != 0;
     bool mag    = (vdp_reg[1] & 0x01u) != 0;
-    int  sz     = (size16 ? 16 : 8) * (mag ? 2 : 1);
 
     /* Contador de sprites por scanline (máx 4 visibles en MSX) */
     uint8_t sprites_on_line[MSX_H];
@@ -507,11 +515,7 @@ static void vdp_render_sprites(void)
         uint8_t color_idx = color_ec & 0x0Fu;
         if (color_idx == 0) continue; /* color 0 = transparente */
 
-        const uint8_t *col_ptr = TMS_PALETTE[color_idx];
-        uint32_t rgba = ((uint32_t)col_ptr[0] << 24)
-                      | ((uint32_t)col_ptr[1] << 16)
-                      | ((uint32_t)col_ptr[2] <<  8)
-                      | 0xFFu;
+        uint32_t rgba = g_palette[color_idx];
 
         /* En sprites 16×16 el número de patrón ignora los 2 bits bajos */
         if (size16) pat_num &= 0xFCu;

@@ -21,6 +21,11 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 - Core logic (`the_castle.c`, `room.c`, `camera.c`, etc.) calls only `hal.h` + `game.h`.
 - To add a platform: write `hal_<platform>.c`, add to CMakeLists.txt.
 
+## Color / Pixel Format
+
+- **`g_palette[16]`** in `screen.c` is packed at runtime via `SDL_MapRGB()` in `hal_sdl2.c:hal_init()` — never hardcode `0xAARRGGBB` literals for the palette. SDL_PIXELFORMAT_RGBA8888 on LE needs byte order R,G,B,A (uint32_t = R | (G<<8) | (B<<16) | (A<<24), i.e. `0xAABBGGRR`), but always use `SDL_MapRGB`/`SDL_MapRGBA` to be platform-safe.
+- Sprites and border color also use `g_palette[color_idx]` directly, not manual packing.
+
 ## Key Gotchas
 
 - **ROM required at runtime.** The original 32KB `.rom` file must be available. It provides music data, room scripts, tile descriptors.

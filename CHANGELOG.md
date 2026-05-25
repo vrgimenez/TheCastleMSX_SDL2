@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-05-24 — Flat tile architecture + screen compositor + SDL_MapRGB palette
+
+### Added
+
+- **tiledata.h/c**: New module — overlay tile arrays loaded from ROM:
+  `g_font[28]` (A-Z + symbols @ 0x8796), `g_digits[10]` @ 0x86F6,
+  `g_title_logo[70]` @ 0x8056, `g_hud_logo[28]` @ 0x7E96+,
+  `g_hud_map[28]` @ 0x84B6, `g_wall_variants[4]`, `g_door[1]`,
+  `g_key_base[2]`, plus `g_keys[12]` generated at runtime for 6 ink colors.
+
+- **screen.h/c**: New module — flat screen buffer `g_screen_buf[24][32]`
+  + background tiles `g_bg_tiles[256][16]`. `screen_render()` composites
+  background from these arrays. Overlay tile renderers: `screen_put_tile()`
+  and `screen_put_tile_array()`.
+
+### Changed
+
+- **tiles.c**: `g_tiles` reduced from 768 to 256 entries (only third 0).
+  `tiles_load_from_rom()` loads TILE_MAP only to third 0.
+  `tiles_reload_all()` writes only third 0.
+  Added `tiles_vram_from_rom()` — writes ROM data directly to VRAM
+  without touching g_tiles.
+
+- **hal_sdl2.c**: VRAM writes in pattern table (0x0000-0x17FF) and color
+  table (0x2000-0x37FF) route to `g_bg_tiles[]`, ignoring the third.
+  Name table writes (0x1800-0x1AFF) route to `g_screen_buf[]`.
+  `vdp_render()` now calls `screen_render()` then `vdp_render_sprites()`.
+  Removed dead per-third render code. Old border_rgba and sprite pixel
+  packing replaced with `g_palette[color_idx]` from SDL_MapRGB.
+
+- **title.c**: `load_title_tiles()` replaces 3 old loaders — loads
+  BG1_MAIN (70 tiles, 0x73-0xB8) to all 3 tercios, font A-Z (0x01-0x1C)
+  to tercios 1-2, digits (0x1D-0x26) to tercios 1-2, credit digits
+  (0x5D-0x66) to tercios 1-2, credit font (0x6E-0x89) to tercios 1-2.
+  Removed redundant credit re-load inside cycle loop.
+
+- **CMakeLists.txt**: Added tiledata.c and screen.c.
+
+### Fixed
+
+- **hal_sdl2.c**: Palette packed via `SDL_MapRGB()` instead of hardcoded
+  `0xAARRGGBB` literals — fixes pink/magenta tint on SDL_RGBA8888
+  little-endian. Also applied to border color and sprite rendering.
+
+- **main.c**: Init order now includes `tiledata_load_from_rom()` and
+  `screen_init()` before `tiles_load_from_rom()`.
+
+### Removed
+
+- Per-third pattern table model abandoned — flat `g_bg_tiles[256][16]`
+  with no per-third differentiation. All third-specific writes collapse
+  to the same destination.
+
 ## 2026-05-18 — Z80 char_to_tile match + per-third font loading
 
 ### Fixed

@@ -25,6 +25,8 @@ set(GAME_SOURCES
     music.c         # Reproductor PSG AY-3-8910, ISR de música (sub_75D4 / sub_7769)
     camera.c        # Cámara, scroll, triggers de sala, render de mapa (sub_623C)
     title.c         # Pantalla de título completa con animación (sub_4A4A)
+    tiledata.c      # Arrays de tiles cargados desde ROM
+    screen.c        # Screen buffer + renderer desde arrays planos
 )
 
 # =============================================================================

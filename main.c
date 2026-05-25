@@ -29,6 +29,8 @@
 
 #include "hal.h"
 #include "game.h"
+#include "tiledata.h"
+#include "screen.h"
 
 /* ==========================================================================
  * CONSTANTES
@@ -311,10 +313,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* --- 3. Cargar tiles ROM → VRAM --- */
+    /* --- 3. Cargar overlay tiles desde ROM --- */
+    tiledata_load_from_rom(rom_buf, rom_size);
+
+    /* --- 4. Inicializar screen buffer --- */
+    screen_init();
+
+    /* --- 5. Cargar tiles ROM → VRAM (escribe g_bg_tiles via HAL) --- */
     tiles_load_from_rom(rom_buf, rom_size);
 
-    /* --- 4. Inicializar subsistemas --- */
+    /* --- 6. Inicializar subsistemas --- */
     game_init();
     enemies_init();
     particles_init();

@@ -76,7 +76,6 @@
 #define ROM_CREDIT_4    0x56B5u   /* cuarto strip                       */
 #define ROM_CREDIT_5    0x56B8u   /* quinto strip                       */
 #define ROM_GAME_MUSIC  0x7ABEu   /* puntero de música de juego en ROM  */
-#define ROM_TS_BG1_MAIN 0x7BC2u   /* tileset principal                  */
 
 /* Sentinel y terminadores */
 #define SEQ_END   0x80u   /* fin de secuencia de coordenadas */
@@ -213,79 +212,37 @@ static void curtain_wipe(void)
 }
 
 /* ==========================================================================
- * Cargar los 4 tiles decorativos de BG1_MAIN (ROM 0x8056) a VRAM 0x73-0x76
+ * Cargar tiles desde ROM a VRAM para la pantalla de título.
  *
- * El logo del título usa tile_base=0x73. Los primeros 4 tiles (0x73-0x76)
- * son el borde decorativo de BG1_MAIN (ROM 0x8056), no los tiles de pared
- * (ROM 0x89C6). intro_prepare_vram limpia tercios 1-2, así que esto debe
- * ejecutarse después.
- * ========================================================================== */
-static void load_title_border_tiles(void)
-{
-    uint32_t foff = 0x8056u - 0x4000u;
-    for (uint8_t i = 0u; i < 4u; i++) {
-        uint8_t idx = (uint8_t)(0x73u + i);
-        for (int t = 0; t < 3; t++) {
-            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            for (int r = 0; r < 8; r++) {
-                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
-                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
-            }
-        }
-    }
-}
-
-/* ==========================================================================
- * Cargar tiles de dígitos (ROM 0x86F6) a VRAM 0x5D-0x66 en thirds 1-2
+ * Después de intro_prepare_vram (que limpia tercios 1-2 y tiles 0x80+ de
+ * tercio 0), necesitamos restaurar los tiles del logo + cargas específicas
+ * para créditos en tercios 1-2.
  *
- * El Z80 char_to_tile mapea '0'..'9' → VRAM 0x5D..0x66.
- * Los dígitos están almacenados en ROM 0x86F6 (mismos datos que ANIM_BG
- * cargados a g_tiles[0x47-0x50]). Cargamos a VRAM en thirds 1-2 para los
- * créditos.
- * ========================================================================== */
-#define ROM_DIGIT_TILES  0x86F6u
-#define ROM_FONT_TILES   0x8796u
-
-static void load_credit_digit_tiles(void)
-{
-    uint32_t foff = ROM_DIGIT_TILES - 0x4000u;
-    for (uint8_t i = 0u; i < 10u; i++) {
-        uint8_t idx = (uint8_t)(0x5Du + i);
-        for (int t = 1; t <= 2; t++) {
-            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            for (int r = 0; r < 8; r++) {
-                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
-                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
-            }
-        }
-    }
-}
-
-/* ==========================================================================
- * Cargar tiles de letras (ROM 0x8796) a VRAM 0x6E-0x89 en thirds 1-2
+ * BG1_MAIN (70 tiles @ ROM 0x8056) → tercia 0-2, VRAM 0x73-0xB8
+ *   Tiles 0-3 (0x8056): borde decorativo → VRAM 0x73-0x76
+ *   Tiles 4-69 (0x8096): cuerpo del logo → VRAM 0x77-0xB8
  *
- * El Z80 char_to_tile mapea 'A'..'Z' → VRAM 0x6E..0x87,
- * '[' → 0x88 (muestra "(c)"), '\' → 0x89 (muestra "?").
- * Las 26 letras están en ROM 0x8796. Los 2 símbolos extra (0x8936-0x8956)
- * son tiles editados para los créditos (28 total).
- * Cargamos a VRAM en thirds 1-2 para los créditos.
+ * Para tercios 1-2 se cargan además:
+ *   Letras A-Z  (28 tiles @ 0x8796) → VRAM 0x01-0x1C
+ *   Dígitos 0-9 (10 tiles @ 0x86F6) → VRAM 0x1D-0x26
+ *   Texto de crédito (0x5D-0x66 = digitos, 0x6E-0x89 = letras)
  * ========================================================================== */
-static void load_credit_font_tiles(void)
+static void load_title_tiles(void)
 {
-    uint32_t foff = ROM_FONT_TILES - 0x4000u;
-    for (uint8_t i = 0u; i < 28u; i++) {
-        uint8_t idx = (uint8_t)(0x6Eu + i);
-        for (int t = 1; t <= 2; t++) {
-            uint16_t pat_base = (uint16_t)(0x0000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            uint16_t col_base = (uint16_t)(0x2000u + (uint16_t)t * 0x0800u + (uint16_t)idx * 8u);
-            for (int r = 0; r < 8; r++) {
-                hal_vdp_write_vram((uint16_t)(pat_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u]);
-                hal_vdp_write_vram((uint16_t)(col_base + r), g_rom[foff + i * 16u + (uint32_t)r * 2u + 1u]);
-            }
-        }
-    }
+    /* BG1_MAIN completo (logo + borde) a los 3 tercios */
+    tiles_vram_from_rom(0x8056u, 0x73u, 70u, 0);
+
+    /* Letras A-Z + 2 símbolos a tercios 1-2 en 0x01-0x1C */
+    tiles_vram_from_rom(0x8796u, 0x01u, 28u, 1);
+
+    /* Dígitos a tercios 1-2 en 0x1D-0x26 */
+    tiles_vram_from_rom(0x86F6u, 0x1Du, 10u, 1);
+
+    /* Dígitos de crédito a tercios 1-2 en 0x5D-0x66 */
+    tiles_vram_from_rom(0x86F6u, 0x5Du, 10u, 1);
+
+    /* Letras de crédito a tercios 1-2 en 0x6E-0x89 */
+    tiles_vram_from_rom(0x8796u, 0x6Eu, 28u, 1);
 }
 
 /* ==========================================================================
@@ -693,14 +650,15 @@ void title_screen(void)
     /* sub_4AE2: preparar VRAM */
     intro_prepare_vram();
 
-    /* Recargar TODOS los tiles desde g_tiles al VRAM (intro_prepare_vram limpió tercios 1-2
-     * y tiles 0x80+ del tercio 0, que incluye los bloques A/B/C del logo en 0x77-0xB8
-     * y los tiles de fuente BIOS en 0x01-0x26 para los créditos) */
+    /* Recargar tercio 0 desde g_tiles (intro_prepare_vram limpió tiles 0x80+
+     * del tercio 0, incluyendo el logo 0x80-0xB8) */
     tiles_reload_all();
 
-    /* Sobreescribir 0x73-0x76 con borde decorativo desde ROM
-     * (g_tiles[0x73-0x76] son variantes de pared de juego, no el borde del título) */
-    load_title_border_tiles();
+    /* Cargar logo + borde a los 3 tercios, y font/dígitos de crédito a
+     * tercios 1-2 desde ROM directamente */
+    load_title_tiles();
+
+    tiles_dump_vram("title_init");
 
     /* Silencio durante la pantalla de título */
     music_stop();
@@ -715,12 +673,8 @@ void title_screen(void)
         if (!title_animate_logo()) goto game_start;
         if (!g_intro_active) goto game_start;
 
-        /* Cargar dígitos/letras a thirds 1-2 para créditos
-         * (se cargan justo antes, no al init, para no pisar el logo) */
-        load_credit_digit_tiles();
-        load_credit_font_tiles();
-
-        /* Fase 2: créditos en scroll (usa thirds 1-2) */
+        /* Fase 2: créditos en scroll (usa tercios 1-2 con font/dígitos
+         * ya cargados por load_title_tiles()) */
         if (!title_animate_credits()) goto game_start;
         if (!g_intro_active) goto game_start;
 
@@ -728,12 +682,8 @@ void title_screen(void)
         if (title_wait_for_input()) goto game_start;
         if (!g_intro_active) goto game_start;
 
-        /* Curtain entre ciclos */
+        /* Curtain entre ciclos (solo name table, pattern table persiste) */
         curtain_wipe();
-
-        /* Restaurar thirds 1-2 desde g_tiles para el logo del próximo ciclo */
-        tiles_write_range_to_thirds(0x5D, 45, 1);
-        tiles_write_range_to_thirds(0x5D, 45, 2);
     }
 
     /* ======================================================================
@@ -749,16 +699,20 @@ void title_screen(void)
     reset_aux_state();
 
     /* Demo loop: corre game_frame() (con keyframes de AI desde 0x7ABE) */
-    while (g_intro_active) {
-        game_frame();
-        tiles_animate(g_state_flags);
-        hal_wait_vsync();
+    {
+        static int demo_dumped = 0;
+        while (g_intro_active) {
+            game_frame();
+            tiles_animate(g_state_flags);
+            if (!demo_dumped) { tiles_dump_vram("demo"); demo_dumped = 1; }
+            hal_wait_vsync();
 
-        if (hal_key_pressed()) {
-            goto game_start;
+            if (hal_key_pressed()) {
+                goto game_start;
+            }
+
+            if (!hal_poll_events()) goto exit;
         }
-
-        if (!hal_poll_events()) goto exit;
     }
 
     /* ======================================================================
