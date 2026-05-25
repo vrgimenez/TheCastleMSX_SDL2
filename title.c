@@ -63,9 +63,6 @@
  * ========================================================================== */
 #define ROM_ORG         0x4000u
 #define VRAM_NAME_BASE  0x1800u
-#define VRAM_PAT_BASE   0x0000u
-#define VRAM_COL_BASE   0x2000u
-#define VRAM_THIRD_SIZE 0x0800u
 
 /* Dirección de las tablas de datos del intro en ROM */
 #define ROM_LOGO_SEQ1   0x56D4u   /* espiral exterior del logo          */
@@ -560,10 +557,6 @@ static void intro_prepare_vram(void)
     hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, (uint16_t)(4u * 32u));
 
     curtain_wipe();
-
-    /* Limpiar pattern/color table desde offset 0x400 (tercios 2 y 3) */
-    hal_vdp_fill_vram((uint16_t)(VRAM_PAT_BASE + 0x400u), 0x00u, 0x1400u);
-    hal_vdp_fill_vram((uint16_t)(VRAM_COL_BASE + 0x400u), 0x11u, 0x1400u);
 
     /* Tile 0x3F (espacio) en cols 8..13, fila 0 */
     for (uint8_t col = 8u; col < 14u; col++) {

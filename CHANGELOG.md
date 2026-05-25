@@ -44,6 +44,16 @@
   `0xAARRGGBB` literals — fixes pink/magenta tint on SDL_RGBA8888
   little-endian. Also applied to border color and sprite rendering.
 
+- **tiledata.h/c**: Added 2×2 door tile system:
+  - `g_door_base[4]` loaded from file offset 0x59F6 (4 tiles forming a
+    2×2 door: white frame top, dark blue panel bottom).
+  - `g_door_open[2]` loaded from file offset 0x5A36 (open door frame
+    upper tiles, bottom 2 = blank).
+  - `g_door_variants[6][4]` generated at runtime via
+    `tiledata_generate_doors()` — 6 ink colors for the door panel.
+  - Renamed old `g_door[1]` → `g_heart[1]` (heart/life tile at file
+    0x5A76, was mislabeled as door).
+
 - **main.c**: Init order now includes `tiledata_load_from_rom()` and
   `screen_init()` before `tiles_load_from_rom()`.
 

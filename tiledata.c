@@ -9,7 +9,10 @@ uint8_t g_title_logo[70][TILE_BYTES];
 uint8_t g_hud_logo[28][TILE_BYTES];
 uint8_t g_hud_map[28][TILE_BYTES];
 uint8_t g_wall_variants[4][TILE_BYTES];
-uint8_t g_door[1][TILE_BYTES];
+uint8_t g_heart[1][TILE_BYTES];
+uint8_t g_door_base[4][TILE_BYTES];
+uint8_t g_door_open[2][TILE_BYTES];
+uint8_t g_door_variants[6][4][TILE_BYTES];
 uint8_t g_key_base[2][TILE_BYTES];
 uint8_t g_keys[12][TILE_BYTES];
 
@@ -30,7 +33,9 @@ void tiledata_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
     memset(g_hud_logo, 0, sizeof(g_hud_logo));
     memset(g_hud_map, 0, sizeof(g_hud_map));
     memset(g_wall_variants, 0, sizeof(g_wall_variants));
-    memset(g_door, 0, sizeof(g_door));
+    memset(g_door_base, 0, sizeof(g_door_base));
+    memset(g_door_open, 0, sizeof(g_door_open));
+    memset(g_heart, 0, sizeof(g_heart));
     memset(g_key_base, 0, sizeof(g_key_base));
 
     /* g_font[28] @ ROM 0x8796 (A-Z + [ + \ ) */
@@ -59,18 +64,30 @@ void tiledata_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
     for (int i = 0; i < 28; i++)
         read_tile(g_hud_map[i], 0x44B6u + (uint32_t)i * 16u);
 
-    /* g_wall_variants[4] @ ROM 0x89C6 (0-1) + 0x8966 (2-3) */
+    /* g_wall_variants[4] @ file 0x49C6 (0-1) + 0x4966 (2-3) */
     for (int i = 0; i < 2; i++)
         read_tile(g_wall_variants[i], 0x49C6u + (uint32_t)i * 16u);
     for (int i = 0; i < 2; i++)
         read_tile(g_wall_variants[2 + i], 0x4966u + (uint32_t)i * 16u);
 
-    /* g_door[1] @ ROM 0x9A76 */
-    read_tile(g_door[0], 0x5A76u);
+    /* g_heart[1] @ file 0x5A76 (life icon) */
+    read_tile(g_heart[0], 0x5A76u);
+
+    /* g_door_base[4] = 2x2 door tiles @ file 0x59F6 */
+    for (int i = 0; i < 4; i++)
+        read_tile(g_door_base[i], 0x59F6u + (uint32_t)i * 16u);
+
+    /* g_door_open[2] = open door frame upper tiles @ file 0x5A36 */
+    for (int i = 0; i < 2; i++)
+        read_tile(g_door_open[i], 0x5A36u + (uint32_t)i * 16u);
 
     /* g_key_base[2] @ ROM 0x9A56 */
     read_tile(g_key_base[0], 0x5A56u);
     read_tile(g_key_base[1], 0x5A66u);
+
+    /* Generate colored variants */
+    tiledata_generate_keys();
+    tiledata_generate_doors();
 }
 
 void tiledata_generate_keys(void)
@@ -82,7 +99,27 @@ void tiledata_generate_keys(void)
             uint8_t *dst = g_keys[k * 2 + t];
             for (int r = 0; r < 8; r++) {
                 dst[r * 2]     = g_key_base[t][r * 2];
-                dst[r * 2 + 1] = (uint8_t)((ink << 4) | (g_key_base[t][r * 2 + 1] & 0x0F));
+                dst[r * 2 + 1] = (uint8_t)((ink << 4) | (g_key_base[t][r * 2 + 1] & 0x0Fu));
+            }
+        }
+    }
+}
+
+void tiledata_generate_doors(void)
+{
+    static const uint8_t DOOR_INKS[6] = { 0x4, 0x6, 0xD, 0x2, 0x7, 0xA };
+    for (int k = 0; k < 6; k++) {
+        uint8_t new_col = DOOR_INKS[k];
+        for (int t = 0; t < 4; t++) {
+            uint8_t *dst = g_door_variants[k][t];
+            for (int r = 0; r < 8; r++) {
+                dst[r * 2] = g_door_base[t][r * 2];
+                uint8_t col = g_door_base[t][r * 2 + 1];
+                uint8_t ink   = (col >> 4u) & 0x0Fu;
+                uint8_t paper = col & 0x0Fu;
+                if (ink   == 0x4u) ink   = new_col;
+                if (paper == 0x4u) paper = new_col;
+                dst[r * 2 + 1] = (uint8_t)((ink << 4u) | paper);
             }
         }
     }
