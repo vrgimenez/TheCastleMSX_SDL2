@@ -66,6 +66,8 @@
 
 #include "hal.h"
 #include "game.h"
+#include "screen.h"
+#include "tiledata.h"
 
 /* Forward declarations of globals defined later in this file */
 uint8_t g_music_transpose_fine   = 0;
@@ -614,11 +616,31 @@ void draw_hud(void)
 
     /* --- Static HUD (replicando Z80 sub_4E0C + sub_64C3 ×5) --- */
 
-    /* 1) MAP area: 7×4 rectángulo en col 17, row 0, tiles 0x0E-0x29 */
-    hud_fill_rect(17u, 0u, 7u, 4u, 0x0Eu);
+    /* 1) MAP area: 7×4 en col 17, row 0 — desde g_hud_map[28] */
+    {
+        uint8_t tile_idx = 0x0Eu;
+        for (uint8_t r = 0u; r < 4u; r++) {
+            uint16_t base = VRAM_NAME_BASE + (uint16_t)(r * 32u) + 17u;
+            for (uint8_t c = 0u; c < 7u; c++) {
+                memcpy(g_bg_tiles[tile_idx], g_hud_map[r * 7u + c], TILE_BYTES);
+                hal_vdp_write_vram((uint16_t)(base + c), tile_idx);
+                tile_idx++;
+            }
+        }
+    }
 
-    /* 2) LOGO area: 7×4 rectángulo en col 24, row 0, tiles 0x2A-0x45 */
-    hud_fill_rect(24u, 0u, 7u, 4u, 0x2Au);
+    /* 2) LOGO area: 7×4 en col 24, row 0 — desde g_hud_logo[28] */
+    {
+        uint8_t tile_idx = 0x2Au;
+        for (uint8_t r = 0u; r < 4u; r++) {
+            uint16_t base = VRAM_NAME_BASE + (uint16_t)(r * 32u) + 24u;
+            for (uint8_t c = 0u; c < 7u; c++) {
+                memcpy(g_bg_tiles[tile_idx], g_hud_logo[r * 7u + c], TILE_BYTES);
+                hal_vdp_write_vram((uint16_t)(base + c), tile_idx);
+                tile_idx++;
+            }
+        }
+    }
 
     /* 3) Separador vertical: col 31, rows 0-3, tile 0x46 (sub_4ECA) */
     {

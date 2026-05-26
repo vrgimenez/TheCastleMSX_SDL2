@@ -531,9 +531,9 @@ static void intro_prepare_vram(void)
 
     curtain_wipe();
 
-    /* Tile 0x3F (espacio) en cols 8..13, fila 0 */
+    /* Espacios (tile 0x00) en cols 8..13, fila 0 */
     for (uint8_t col = 8u; col < 14u; col++) {
-        vdp_put(col, 0u, 0x3Fu);
+        vdp_put(col, 0u, 0x00u);
     }
 }
 
@@ -548,7 +548,7 @@ static void intro_prepare_vram(void)
 static void intro_cleanup(void)
 {
     for (uint8_t col = 8u; col < 14u; col++) {
-        vdp_put(col, 0u, 0x3Fu);
+        vdp_put(col, 0u, 0x00u);
     }
     /* Limpiar la pantalla completa */
     curtain_wipe();

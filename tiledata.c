@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <string.h>
 #include "tiledata.h"
-#include "game.h"
 
 uint8_t g_font[28][TILE_BYTES];
 uint8_t g_digits[10][TILE_BYTES];
@@ -16,17 +15,15 @@ uint8_t g_door_variants[6][4][TILE_BYTES];
 uint8_t g_key_base[2][TILE_BYTES];
 uint8_t g_keys[12][TILE_BYTES];
 
-static void read_tile(uint8_t dst[16], uint32_t file_off)
+static void read_tile(uint8_t dst[16], uint32_t file_off,
+                      const uint8_t *rom, uint32_t rom_size)
 {
-    if (file_off + 16 > g_rom_size) return;
-    memcpy(dst, g_rom + file_off, 16);
+    if (file_off + 16 > rom_size) return;
+    memcpy(dst, rom + file_off, 16);
 }
 
 void tiledata_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
 {
-    (void)rom_data;
-    (void)rom_size;
-
     memset(g_font, 0, sizeof(g_font));
     memset(g_digits, 0, sizeof(g_digits));
     memset(g_title_logo, 0, sizeof(g_title_logo));
@@ -40,52 +37,51 @@ void tiledata_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
 
     /* g_font[28] @ ROM 0x8796 (A-Z + [ + \ ) */
     for (int i = 0; i < 28; i++)
-        read_tile(g_font[i], 0x4796u + (uint32_t)i * 16u);
+        read_tile(g_font[i], 0x4796u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_digits[10] @ ROM 0x86F6 */
     for (int i = 0; i < 10; i++)
-        read_tile(g_digits[i], 0x46F6u + (uint32_t)i * 16u);
+        read_tile(g_digits[i], 0x46F6u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_title_logo[70] @ ROM 0x8056 (4 border + 66 body) */
     for (int i = 0; i < 70; i++)
-        read_tile(g_title_logo[i], 0x4056u + (uint32_t)i * 16u);
+        read_tile(g_title_logo[i], 0x4056u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_hud_logo[28] = 7×4, loaded from 4 row banks */
     for (int i = 0; i < 7; i++)
-        read_tile(g_hud_logo[0 * 7 + i], 0x3E96u + (uint32_t)i * 16u);
+        read_tile(g_hud_logo[0 * 7 + i], 0x3E96u + (uint32_t)i * 16u, rom_data, rom_size);
     for (int i = 0; i < 7; i++)
-        read_tile(g_hud_logo[1 * 7 + i], 0x3F06u + (uint32_t)i * 16u);
+        read_tile(g_hud_logo[1 * 7 + i], 0x3F06u + (uint32_t)i * 16u, rom_data, rom_size);
     for (int i = 0; i < 7; i++)
-        read_tile(g_hud_logo[2 * 7 + i], 0x3F76u + (uint32_t)i * 16u);
+        read_tile(g_hud_logo[2 * 7 + i], 0x3F76u + (uint32_t)i * 16u, rom_data, rom_size);
     for (int i = 0; i < 7; i++)
-        read_tile(g_hud_logo[3 * 7 + i], 0x3FE6u + (uint32_t)i * 16u);
+        read_tile(g_hud_logo[3 * 7 + i], 0x3FE6u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_hud_map[28] @ ROM 0x84B6 */
     for (int i = 0; i < 28; i++)
-        read_tile(g_hud_map[i], 0x44B6u + (uint32_t)i * 16u);
+        read_tile(g_hud_map[i], 0x44B6u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_wall_variants[4] @ file 0x49C6 (0-1) + 0x4966 (2-3) */
     for (int i = 0; i < 2; i++)
-        read_tile(g_wall_variants[i], 0x49C6u + (uint32_t)i * 16u);
+        read_tile(g_wall_variants[i], 0x49C6u + (uint32_t)i * 16u, rom_data, rom_size);
     for (int i = 0; i < 2; i++)
-        read_tile(g_wall_variants[2 + i], 0x4966u + (uint32_t)i * 16u);
+        read_tile(g_wall_variants[2 + i], 0x4966u + (uint32_t)i * 16u, rom_data, rom_size);
 
     /* g_heart[1] @ file 0x5A76 (life icon) */
-    read_tile(g_heart[0], 0x5A76u);
+    read_tile(g_heart[0], 0x5A76u, rom_data, rom_size);
 
     /* g_door_base[4] = 2x2 door tiles @ file 0x59F6 */
     for (int i = 0; i < 4; i++)
-        read_tile(g_door_base[i], 0x59F6u + (uint32_t)i * 16u);
+        read_tile(g_door_base[i], 0x59F6u + (uint32_t)i * 16u, rom_data, rom_size);
 
-    /* g_door_open[2] = open door frame upper tiles @ file 0x5A36 */
+    /* g_door_open[2] (open door frame) @ file 0x5A36 */
     for (int i = 0; i < 2; i++)
-        read_tile(g_door_open[i], 0x5A36u + (uint32_t)i * 16u);
+        read_tile(g_door_open[i], 0x5A36u + (uint32_t)i * 16u, rom_data, rom_size);
 
-    /* g_key_base[2] @ ROM 0x9A56 */
-    read_tile(g_key_base[0], 0x5A56u);
-    read_tile(g_key_base[1], 0x5A66u);
+    /* g_key_base[2] @ file 0x5A56 (0) and 0x5A66 (1) */
+    read_tile(g_key_base[0], 0x5A56u, rom_data, rom_size);
+    read_tile(g_key_base[1], 0x5A66u, rom_data, rom_size);
 
-    /* Generate colored variants */
     tiledata_generate_keys();
     tiledata_generate_doors();
 }
