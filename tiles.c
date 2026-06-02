@@ -18,22 +18,19 @@ static const struct {
     uint8_t  count;
 } TILE_MAP[] = {
     { 0x00, ROM_ADDR(0x8956), 1 },    /* BLANK */
-    { 0x01, ROM_ADDR(0x8796), 26 },   /* font A-Z (also used as WALLS at 0x59-0x72) */
-    { 0x0D, ROM_ADDR(0x9A76), 1 },    /* DOOR */
-    { 0x0E, ROM_ADDR(0x84B6), 28 },   /* BG3 (0x0E-0x29) */
-    { 0x2A, ROM_ADDR(0x7E96),  7 },   /* LOGO row 0 (file 0x3E96) */
-    { 0x31, ROM_ADDR(0x7F06),  7 },   /* LOGO row 1 (file 0x3F06) */
-    { 0x38, ROM_ADDR(0x7F76),  7 },   /* LOGO row 2 (file 0x3F76) */
-    { 0x3F, ROM_ADDR(0x7FE6),  7 },   /* LOGO row 3 (file 0x3FE6) */
-    { 0x46, ROM_ADDR(0x9A86), 1 },    /* KEY */
-    { 0x47, ROM_ADDR(0x86F6), 10 },   /* ANIM_BG (0x47-0x50) */
-    { 0x51, ROM_ADDR(0x8676), 4 },    /* BG4_A (0x51-0x54) */
-    { 0x55, ROM_ADDR(0x86B6), 2 },    /* BG4_B (0x55-0x56) */
-    { 0x57, ROM_ADDR(0x86D6), 2 },    /* BG4_C (0x57-0x58) */
-    { 0x59, ROM_ADDR(0x8796), 26 },   /* WALLS (0x59-0x72) — same ROM data as font */
-    { 0x73, ROM_ADDR(0x89C6), 2 },    /* wall tiles 0x73-0x74 */
-    { 0x75, ROM_ADDR(0x8966), 2 },    /* wall tiles 0x75-0x76 */
-    { 0x77, ROM_ADDR(0x8096), 66 },   /* LOGO body (0x77-0xB8) — tile #5+ from ROM 0x8056 */
+    { 0x01, ROM_ADDR(0x9A56), 2 },    /* KEY (dark blue)*/
+    { 0x0D, ROM_ADDR(0x9A76), 1 },    /* HEART */
+    { 0x0E, ROM_ADDR(0x84B6), 28 },   /* MAP Area 7x4, rows 0-3, BG3 (tiles 0x0E-0x29) (file 0x44B6-0x4675) */
+    { 0x2A, ROM_ADDR(0x7E96), 28 },   /* LOGO Area 7x4, rows 0-3 (tiles 0x2A-0x45) (file 0x3E96-0x4055) */
+    { 0x46, ROM_ADDR(0x9A86),  1 },   /* Vertical Separator */
+    { 0x47, ROM_ADDR(0x86F6), 10 },   /* Digits 0-9 - ANIM_BG (0x47-0x50) */
+    { 0x51, ROM_ADDR(0x8676), 4 },    /* "Hi""SCORE" - BG4_A (0x51-0x54) */
+    { 0x55, ROM_ADDR(0x86B6), 2 },    /* "Key" - BG4_B (0x55-0x56) */
+    { 0x57, ROM_ADDR(0x86D6), 2 },    /* "Life" - BG4_C (0x57-0x58) */
+    { 0x59, ROM_ADDR(0x8796), 26 },   /* Font A-Z */
+    { 0x73, ROM_ADDR(0x8056), 70 },   /* LOGO Body 14x5, rows 0-4 (tiles 0x73-0xB8) (file 0x4056-0x44B5) */
+//  { 0x73, ROM_ADDR(0x89C6), 2 },    /* wall tiles 0x73-0x74 */
+//  { 0x75, ROM_ADDR(0x8966), 2 },    /* wall tiles 0x75-0x76 */
 };
 #define N_MAPS (sizeof(TILE_MAP)/sizeof(TILE_MAP[0]))
 

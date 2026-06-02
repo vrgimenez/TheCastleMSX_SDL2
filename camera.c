@@ -598,10 +598,10 @@ static void hud_fill_rect(uint8_t col, uint8_t row,
                           uint8_t width, uint8_t height,
                           uint8_t start_tile)
 {
+    uint8_t tile = start_tile;
     for (uint8_t r = 0u; r < height; r++) {
         uint16_t base = (uint16_t)(VRAM_NAME_BASE
                       + (uint16_t)(row + r) * 32u + col);
-        uint8_t tile = start_tile;
         for (uint8_t c = 0u; c < width; c++) {
             hal_vdp_write_vram((uint16_t)(base + c),
                                (start_tile == 0u) ? 0u : tile);
@@ -616,39 +616,18 @@ void draw_hud(void)
 
     /* --- Static HUD (replicando Z80 sub_4E0C + sub_64C3 ×5) --- */
 
-    /* 1) MAP area: 7×4 en col 17, row 0 — desde g_hud_map[28] */
-    {
-        uint8_t tile_idx = 0x0Eu;
-        for (uint8_t r = 0u; r < 4u; r++) {
-            uint16_t base = VRAM_NAME_BASE + (uint16_t)(r * 32u) + 17u;
-            for (uint8_t c = 0u; c < 7u; c++) {
-                memcpy(g_bg_tiles[tile_idx], g_hud_map[r * 7u + c], TILE_BYTES);
-                hal_vdp_write_vram((uint16_t)(base + c), tile_idx);
-                tile_idx++;
-            }
-        }
-    }
+    /* 1) MAP area: 7Ã—4 rectángulo en col 17, row 0, tiles 0x0E-0x29 */
+    hud_fill_rect(17u, 0u, 7u, 4u, 0x0Eu);
 
-    /* 2) LOGO area: 7×4 en col 24, row 0 — desde g_hud_logo[28] */
-    {
-        uint8_t tile_idx = 0x2Au;
-        for (uint8_t r = 0u; r < 4u; r++) {
-            uint16_t base = VRAM_NAME_BASE + (uint16_t)(r * 32u) + 24u;
-            for (uint8_t c = 0u; c < 7u; c++) {
-                memcpy(g_bg_tiles[tile_idx], g_hud_logo[r * 7u + c], TILE_BYTES);
-                hal_vdp_write_vram((uint16_t)(base + c), tile_idx);
-                tile_idx++;
-            }
-        }
-    }
+    /* 2) LOGO area: 7x4 rectángulo en col 24, row 0, tiles 0x2A-0x45 */
+    hud_fill_rect(24u, 0u, 7u, 4u, 0x2Au);
 
     /* 3) Separador vertical: col 31, rows 0-3, tile 0x46 (sub_4ECA) */
-    {
-        uint16_t addr = (uint16_t)(VRAM_NAME_BASE + 31u);
-        hal_vdp_write_vram(addr, 0x46u);
-        hal_vdp_write_vram((uint16_t)(addr + 32u), 0x46u);
-        hal_vdp_write_vram((uint16_t)(addr + 64u), 0x46u);
-        hal_vdp_write_vram((uint16_t)(addr + 96u), 0x46u);
+    uint8_t row = 0, col = 31, tile = 0x46;
+    for (uint8_t r = 0u; r < 4u; r++) {
+        uint16_t addr = (uint16_t)(VRAM_NAME_BASE
+                      + (uint16_t)(row + r) * 32u + col);
+            hal_vdp_write_vram((uint16_t)(addr), tile);
     }
 
     /* 4) "SCORE" label: col 1, row 0, tiles 0x52-0x54 (3×1) */
