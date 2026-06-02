@@ -57,6 +57,18 @@ void tiledata_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
     for (int i = 0; i < 7; i++)
         read_tile(g_hud_logo[3 * 7 + i], 0x3FE6u + (uint32_t)i * 16u, rom_data, rom_size);
 
+    /* Fixup: tiles 0x42 (idx 24) rows 3-6 y 0x44 (idx 26) rows 2-6
+     * tienen col=0x04 (ink=0 → border). Cambiar ink=0 → ink=1 (negro)
+     * para que no hereden el color del borde. */
+    for (int r = 3; r <= 6; r++) {
+        uint8_t *col = &g_hud_logo[24][r * 2 + 1];
+        if (*col == 0x04u) *col = 0x14u;
+    }
+    for (int r = 2; r <= 6; r++) {
+        uint8_t *col = &g_hud_logo[26][r * 2 + 1];
+        if (*col == 0x04u) *col = 0x14u;
+    }
+
     /* g_hud_map[28] @ ROM 0x84B6 */
     for (int i = 0; i < 28; i++)
         read_tile(g_hud_map[i], 0x44B6u + (uint32_t)i * 16u, rom_data, rom_size);
