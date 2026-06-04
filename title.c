@@ -525,31 +525,31 @@ static bool title_wait_for_input(void)
  * ========================================================================== */
 static void intro_prepare_vram(void)
 {
-    /* Limpiar HUD area (rows 0-3) antes de título */
-    /* (curtain_wipe solo limpia rows 4-23) */
-    hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, (uint16_t)(4u * 32u));
+    /* Z80 fiel: NO tocar rows 0-3 (el HUD dibujado por sub_4D52 persiste) */
 
     curtain_wipe();
 
-    /* Espacios (tile 0x00) en cols 8..13, fila 0 */
-    for (uint8_t col = 8u; col < 14u; col++) {
-        vdp_put(col, 0u, 0x00u);
-    }
+    /* Z80 sub_4B07: sprites 8-13 en pixel (0,0) con patrón blank.
+     * NO escribe al name table — no tiene equivalente en SDL. */
+    // for (uint8_t col = 8u; col < 14u; col++) {
+    //     vdp_put(col, 0u, 0x00u);
+    // }
 }
 
 /* ==========================================================================
  * sub_5327 — Cleanup al salir del intro
  *
  * Original:
- *   HL=0x0000, B=0x08
- *   Loop B: write tile 0x3F en (col=B, row=0); INC B; CP 0x0E; RET Z si igual
- *   Limpia cols 8..13 en fila 0 escribiendo tile 0x3F
+ *   Z80 sub_4B07: sprites 8-13 en pixel (0,0) con patrón blank.
+ *   No escribe al name table — omitido en SDL.
+ *   curtain_wipe() = CALL sub_5128 (wait frames) + cleanup
  * ========================================================================== */
 static void intro_cleanup(void)
 {
-    for (uint8_t col = 8u; col < 14u; col++) {
-        vdp_put(col, 0u, 0x00u);
-    }
+    // for (uint8_t col = 8u; col < 14u; col++) {
+    //     vdp_put(col, 0u, 0x00u);
+    // }
+
     /* Limpiar la pantalla completa */
     curtain_wipe();
 }
@@ -607,21 +607,23 @@ static void reset_aux_state(void)
  * ========================================================================== */
 void title_screen(void)
 {
+    /* sub_4D52 a las 0x4019: reset nivel + HUD con "NO"/"MAP" antes del title */
+    game_reset_level();
+    draw_hud();
+
     /* Inicialización */
     g_intro_active = 1u;
 
     /* sub_6383: limpiar keyframe queue */
     memset(g_keyframe_queue, 0xFFu, 9u);
 
-    /* sub_4AE2: preparar VRAM */
+    /* sub_4AE2: preparar VRAM (NO toca rows 0-3, el HUD persiste) */
     intro_prepare_vram();
 
     tiles_reload_all();
 
     /* Cargar logo, font y dígitos de crédito desde ROM */
     load_title_tiles();
-
-    draw_hud();
 
     tiles_dump_vram("title_init");
 
@@ -682,6 +684,7 @@ void title_screen(void)
 game_start:
     music_stop();
     intro_cleanup();
+    g_intro_active = 0u;
 
     game_reset_level();
     music_play_game();

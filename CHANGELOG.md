@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-06-03 — Identified sub_6EE1 as sprite-setter, not name-table write
+
+### Fixed
+
+- **title.c** (`intro_prepare_vram`, `intro_cleanup`): Removed incorrect blank-tile
+  writes to name table row 0 cols 8-13. Z80 `sub_4B07` positions sprites 8-13 at
+  pixel (Y=0, X=0) with blank pattern — it does NOT write to the name table. No
+  SDL equivalent needed.
+
+### Changed
+
+- **README.md**: Port status table now includes `sub_6EE1` entry. Key Gotchas
+  section documents `sub_6EE1` as a sprite attribute setter via BIOS `WRTVRM`
+  (`CALL 0x004D`), not a name-table writer.
+
+### Research
+
+- **`CALL 0x004D`** confirmed as BIOS `WRTVRM` (Write VRAM) per MSX Wiki.
+- **`sub_6EE1`/`sub_6EAE`**: Uses `LD HL,(GRPATR)` (sprite attribute table base at
+  0xF3CD, set by INIGRP) to calculate sprite entry address = GRPATR + sprite_num*4,
+  then calls WRTVRM 4 times to set Y=lo(HL), X=hi(HL), Pattern=tile*4, Color=translated_tile.
+  Port reimplements this as `put_tile(col, row, tile)` writing directly to the name table
+  since SDL2 has no sprite hardware — a semantic translation, not 1:1 bytecode.
+- **Z80 enemies/effects render via sprites**, not name-table tiles. The port's
+  direct name-table writes are functionally equivalent but architecturally different.
+
 ## 2026-05-25 — Per-third cleanup + music fix + credit strip comments
 
 ### Fixed

@@ -20,6 +20,7 @@ Port of **The Castle** (ASCII, 1986) from MSX Z80 assembly to pure C99 with SDL2
  | Screen compositor | ✅ | g_screen_buf[24][32] + g_bg_tiles renderer |
  | Player movement + collision | ✅ | Complete with map collision |
  | Score + BCD | ✅ | Score add, hi-score, display (DAA simplification noted) |
+ | `sub_6EE1` sprite attr setter | ✅ | Identified as sprite-positioning, not name-table write |
  | `game_loop()` / `the_castle.c` | 🚧 | Skeleton functional; several subroutines simplified vs original |
  | `update_roller_by_pos()` | 🚧 | Stub — draws tile, no enemy slot instantiation |
  | `update_bat_by_slot()` | 🚧 | Stub — draws tile, no enemy slot instantiation |
@@ -139,5 +140,6 @@ The AY-3-8910 is synthesized with:
 - **Two map layers**: `g_map[0x400]` (20×30 collision) and `g_tilemap[]` (30×30 visual)
 - **BCD room coords**: `g_room_x` stores BCD (hi-nibble = row, lo-nibble = column)
 - **Flat tile architecture**: No per-third pattern table — `g_bg_tiles[256][16]` shared across all screen thirds
+- **`sub_6EE1`/`sub_6EAE` is a SPRITE attribute setter**, not a name-table writer — sets sprite `B` at pixel position `(X=H, Y=L)` via `CALL 0x004D` (BIOS `WRTVRM`). Port calls it `put_tile(col, row, tile)` as a semantic translation (SDL2 has no sprite hardware).
 - **Init order matters**: `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`
 - **Tiles are NOT compressed** — all verified tiles in ROM are raw 16-byte interleaved (pattern + color)

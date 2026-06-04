@@ -513,11 +513,10 @@ void render_background(void)
         /* Configurar tempo de música durante intro */
         music_set_tempo(0x06u, 0x01u);
 
-        /* Comprobar keyframe queue (0xEACD): si alguno != 0xFF → finalizar intro */
+        /* Comprobar keyframe queue (0xEACD): si alguno != 0xFF → restart */
         extern uint8_t g_keyframe_queue[];  /* the_castle.c */
         for (int i = 0; i < 9; i++) {
             if (g_keyframe_queue[i] != 0xFFu) {
-                g_intro_active = 0u;
                 g_restart_flag = 1u;
                 return;
             }
@@ -651,23 +650,56 @@ void draw_hud(void)
     base1 = (uint16_t)(VRAM_NAME_BASE + 1u * 32u);
     base2 = (uint16_t)(VRAM_NAME_BASE + 2u * 32u);
 
-    /* Score digits: row 1 cols 19-21, row 2 cols 19-21 */
+    /* Score digits: 6 digits en (col 2, row 1) */
     {
         uint8_t s2 = g_score[2];
-        hal_vdp_write_vram((uint16_t)(base1 + 19u),
+        hal_vdp_write_vram((uint16_t)(base1 + 2u),
                            (uint8_t)(0x47u + ((s2 >> 4) & 0x0Fu)));
-        hal_vdp_write_vram((uint16_t)(base1 + 20u),
+        hal_vdp_write_vram((uint16_t)(base1 + 3u),
                            (uint8_t)(0x47u + (s2 & 0x0Fu)));
         uint8_t s1 = g_score[1];
-        hal_vdp_write_vram((uint16_t)(base1 + 21u),
+        hal_vdp_write_vram((uint16_t)(base1 + 4u),
                            (uint8_t)(0x47u + ((s1 >> 4) & 0x0Fu)));
-        hal_vdp_write_vram((uint16_t)(base2 + 19u),
+        hal_vdp_write_vram((uint16_t)(base1 + 5u),
                            (uint8_t)(0x47u + (s1 & 0x0Fu)));
         uint8_t s0 = g_score[0];
-        hal_vdp_write_vram((uint16_t)(base2 + 20u),
+        hal_vdp_write_vram((uint16_t)(base1 + 6u),
                            (uint8_t)(0x47u + ((s0 >> 4) & 0x0Fu)));
-        hal_vdp_write_vram((uint16_t)(base2 + 21u),
+        hal_vdp_write_vram((uint16_t)(base1 + 7u),
                            (uint8_t)(0x47u + (s0 & 0x0Fu)));
+    }
+
+    /* Hi-score digits: 6 dígitos en (col 10, row 1) */
+    {
+        uint8_t h2 = g_hiscore[2];
+        hal_vdp_write_vram((uint16_t)(base1 + 10u),
+                           (uint8_t)(0x47u + ((h2 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base1 + 11u),
+                           (uint8_t)(0x47u + (h2 & 0x0Fu)));
+        uint8_t h1 = g_hiscore[1];
+        hal_vdp_write_vram((uint16_t)(base1 + 12u),
+                           (uint8_t)(0x47u + ((h1 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base1 + 13u),
+                           (uint8_t)(0x47u + (h1 & 0x0Fu)));
+        uint8_t h0 = g_hiscore[0];
+        hal_vdp_write_vram((uint16_t)(base1 + 14u),
+                           (uint8_t)(0x47u + ((h0 >> 4) & 0x0Fu)));
+        hal_vdp_write_vram((uint16_t)(base1 + 15u),
+                           (uint8_t)(0x47u + (h0 & 0x0Fu)));
+    }
+
+    /* Text overlays en MAP area (replicando Z80 sub_4E0C + sub_4E60/4E76) */
+    {
+        if (g_intro_active) {
+            /* Demo mode: "DEMO" en (18,1), "GAME" en (19,2) */
+            camera_draw_string(18u, 1u, 0x56CAu, 0x59u, 0u);
+            camera_draw_string(19u, 2u, 0x56CFu, 0x59u, 0u);
+        } else if (!(g_player_y & 0x08u)) {
+            /* Sin mapa: "NO" en (19,1), "MAP" en (19,2) */
+            camera_draw_string(19u, 1u, 0x6472u, 0x59u, 0u);
+            camera_draw_string(19u, 2u, 0x6476u, 0x59u, 0u);
+        }
+        /* else: gameplay normal — map tiles de hud_fill_rect se mantienen */
     }
 
     /* Key icons: row 2 col 3+ (0x01-0x0C) */

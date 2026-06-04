@@ -314,7 +314,7 @@ int main(int argc, char *argv[])
     }
 
     /* --- 3. Cargar overlay tiles desde ROM --- */
-    tiledata_load_from_rom(rom_buf, rom_size);
+  //tiledata_load_from_rom(rom_buf, rom_size);
 
     /* --- 4. Inicializar screen buffer --- */
     screen_init();

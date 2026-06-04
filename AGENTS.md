@@ -30,6 +30,10 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 
 - **ROM required at runtime.** The original 32KB `.rom` file must be available. It provides music data, room scripts, tile descriptors.
 - **`music_isr_tick()` lives in `hal_wait_vsync()`**, NOT in the game loop — mimics the MSX VBlank ISR.
+- **`sub_6EE1`/`sub_6EAE` is a SPRITE attribute setter**, not a name-table writer. It sets sprite `B` at pixel position `(X=H, Y=L)` via BIOS `WRTVRM` (0x004D). The port translates this to `put_tile(col, row, tile)` because SDL2 has no sprite hardware. Enemies, effects and blanking in the Z80 all use sprites; the port writes directly to the name table instead.
+- **`CALL 0x004D`** = BIOS `WRTVRM` (MSX Wiki confirmed). Takes HL=VRAM address, A=value. Used extensively by `sub_6EAE` for sprite attribute writes.
+- **`LD HL,(0xF3CD)`** loads `GRPATR` (sprite attribute table base, set by INIGRP/SETGRP at init). Used in `sub_6EAE` to calculate sprite entry address.
+- **`sub_4B07`** in Z80: positions sprites 8-13 at pixel (Y=0, X=0) with blank pattern — does NOT write to name table. No SDL equivalent (commented out in `intro_prepare_vram()` and `intro_cleanup()`).
 - **Init order matters:** `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`.
 - **`char_to_tile` Z80 formula (sub_62B0):** `chr - 0x30 + 0x5D` for ALL chr ≥ 0x30 (digits AND letters). `RET NC` means the letter case (`SUB 0x41, ADD C`) is ONLY for chr < 0x30 (punctuation). Two copies: `title.c:char_to_tile()` and `camera.c:camera_draw_string()` — both now match the Z80. `room.c` room scripts use a DIFFERENT encoding scheme.
 - **Credit text tile map (Z80 char_to_tile, thirds 1-2):**
