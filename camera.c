@@ -67,7 +67,6 @@
 #include "hal.h"
 #include "game.h"
 #include "screen.h"
-#include "tiledata.h"
 
 /* Forward declarations of globals defined later in this file */
 uint8_t g_music_transpose_fine   = 0;
@@ -540,41 +539,44 @@ void render_background(void)
         }
     }
 
-    /* Configurar velocidad del jugador y música según tipo de bloque */
-    uint8_t d = g_trigger_flags;
-    uint8_t e = g_trigger_flags2;
+    /* Configurar velocidad del jugador y música según tipo de bloque
+     * Replica sub_6336 del Z80:
+     *   bit 1=1  → velocidad 0x70, transpose 0x00, tempo 0x06
+     *   bit 2=1  → velocidad 0x30, transpose 0x07, tempo 0x04
+     *   default  → velocidad 0x01, transpose 0x0C, tempo 0x02
+     *   bit 3=0  → silencio (tempo=0)
+     * En Z80 (0xEAD3) = 0xFF por defecto (relleno desde sub_6383),
+     * bits individuales se limpian por colisiones. En el port,
+     * si g_trigger_flags == 0 el sistema de colisiones no está
+     * activo → no sobrescribir tempo. */
+    if (c != 0u) {
+        uint8_t e = g_trigger_flags2;
 
-    /* bit 1: bloque lento */
-    if (!(c & 0x02u)) {
-        g_player_speed = 0x01u;
-        music_set_transpose(0x0Cu, 0u);
-        e = 0x02u;
-    }
-    /* bit 2: bloque rápido */
-    else if (c & 0x04u) {
-        g_player_speed = 0x30u;
-        music_set_transpose(0x07u, 0u);
-        e = 0x04u;
-    }
-    /* bit 0 (parado) */
-    else {
-        g_player_speed = 0x70u;   /* velocidad normal */
-        music_set_transpose(0x00u, 0u);
-        e = 0x06u;
-    }
+        if (c & 0x02u) {
+            g_player_speed = 0x70u;
+            music_set_transpose(0x00u, 0u);
+            e = 0x06u;
+        } else if (c & 0x04u) {
+            g_player_speed = 0x30u;
+            music_set_transpose(0x07u, 0u);
+            e = 0x04u;
+        } else {
+            g_player_speed = 0x01u;
+            music_set_transpose(0x0Cu, 0u);
+            e = 0x02u;
+        }
 
-    /* bit 3: sin sonido de bloque */
-    if (!(c & 0x08u)) e = 0u;
+        /* bit 3: sin sonido */
+        if (!(c & 0x08u)) e = 0u;
 
-    /* Aplicar configuración */
-    g_music_tempo_counter = e;
+        music_set_tempo(e, 0u);
+    }
 
     /* sub_634B: CALL sub_4F93 si bit 0 de g_trigger_flags2 == 0 */
     /* sub_4F93: gestión de movimiento de cámara — TODO */
     /* sub_6358: si bit 1 de g_trigger_flags2 == 0:
      *   esperar frame, resetear anim, limpiar keyframe queue,
      *   loop hasta que g_anim_frame o g_facing != 0 */
-    (void)d;
 }
 
 /* ==========================================================================

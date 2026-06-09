@@ -58,11 +58,14 @@ extern uint32_t       g_rom_size;  /* tamaño del buffer                      */
 
 /* --- tiles.c --- */
 void    tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
-void    tiles_rom_to_vram(uint32_t rom_file_off, uint8_t vram_start,
+void    tiles_rom_to_vram(uint32_t rom_file_off, uint16_t vram_idx,
                           uint8_t count);
-void    tiles_vram_from_rom(uint32_t rom_file_off, uint8_t vram_start,
+void    tiles_vram_from_rom(uint32_t rom_file_off, uint16_t vram_idx,
                             uint8_t count);
 void    tiles_reload_all(void);
+void    tiles_load_walls_and_anim(uint16_t vram_idx);
+void    tiles_load_patterns(uint32_t rom_off, uint16_t vram_idx,
+                            uint8_t count, uint8_t color);
 void    tiles_reload_walls_and_anim(void);
 void    tiles_animate(uint8_t frame_counter);
 void    tiles_dump_vram(const char *label);
@@ -132,6 +135,9 @@ void music_set_transpose(uint8_t fine, uint8_t coarse);
 void music_sfx_trigger(uint8_t sfx_id, uint8_t volume);
 void music_play_title(void);
 void music_play_game(void);
+void music_play_underwater(void);
+void music_play_immortality(void);
+void music_play_song2(void);
 void music_stop(void);
 
 /* --- camera.c --- */

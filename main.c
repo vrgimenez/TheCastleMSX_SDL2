@@ -29,7 +29,6 @@
 
 #include "hal.h"
 #include "game.h"
-#include "tiledata.h"
 #include "screen.h"
 
 /* ==========================================================================
@@ -201,6 +200,37 @@ void game_frame(void)
     if (!hal_poll_events()) { g_game_over = 1; return; }
     g_enemies_active = 0;
 
+    /* F1: suicidio (pierde una vida y game over) / F2: perder todas las vidas */
+    {
+        uint8_t sk = hal_read_special_key();
+        if (sk == 1) {
+            if (g_lives > 0u) g_lives--;
+            g_game_over = 1;
+        } else if (sk == 2) {
+            g_lives = 0;
+            g_game_over = 1;
+        }
+    }
+
+    /* WASD teleport (extra del port, solo en modo juego activo) */
+    if (g_room_exit == 0u && !(g_state_flags & 0x01u)) {
+        static const uint8_t WASD_TO_EXIT[5] = { 0, 1, 7, 5, 3 };
+        /* W→EXIT_UP (1), A→EXIT_LEFT (7), S→EXIT_DOWN (5), D→EXIT_RIGHT (3) */
+        uint8_t wasd = hal_read_wasd_dir();
+        if (wasd != 0u) {
+            uint8_t hi = (g_room_x >> 4) & 0x0Fu;
+            uint8_t lo = g_room_x & 0x0Fu;
+            bool valid = false;
+            switch (wasd) {
+                case 1: valid = (hi > 0);      break; /* W: arriba */
+                case 2: valid = (lo > 0);      break; /* A: izquierda */
+                case 3: valid = (hi < 9);      break; /* S: abajo */
+                case 4: valid = (lo < 9);      break; /* D: derecha */
+            }
+            if (valid) g_room_exit = WASD_TO_EXIT[wasd];
+        }
+    }
+
     /* sub_62D8: render background with trigger processing */
     render_background();
 
@@ -314,7 +344,7 @@ int main(int argc, char *argv[])
     }
 
     /* --- 3. Cargar overlay tiles desde ROM --- */
-  //tiledata_load_from_rom(rom_buf, rom_size);
+
 
     /* --- 4. Inicializar screen buffer --- */
     screen_init();
@@ -331,7 +361,9 @@ int main(int argc, char *argv[])
     camera_init();
 
     printf("Iniciando The Castle...\n");
-    printf("Controles: Cursores/WASD = moverse, Z/Space = acción, Esc = salir\n");
+    printf("Controles: Cursores = mover, Space = saltar, Esc = salir\n");
+    printf("          F1=suicidio F2=game over Ctrl=2x Ctrl+Alt=4x\n");
+    printf("          WASD=teletransporte entre salas\n");
 
     /* --- 5. Loop principal --- */
     main_loop();

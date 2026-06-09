@@ -9,7 +9,7 @@
 #define SCREEN_ROWS 24
 
 extern uint8_t  g_screen_buf[SCREEN_ROWS][SCREEN_COLS];
-extern uint8_t  g_bg_tiles[256][16];
+extern uint8_t  g_bg_tiles[768][16];
 extern uint32_t g_palette[16];  /* packed in texture pixel format */
 
 void screen_init(void);

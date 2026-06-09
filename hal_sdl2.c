@@ -224,7 +224,7 @@ bool hal_init(bool pal_timing)
     vdp_reg[4] = 0x03;  /* pattern     @ 0x0000 (0x03 << 11 → pero en Gr2 0x0000) */
     vdp_reg[5] = 0x36;  /* sprite attr @ 0x1B00 (0x36 << 7) */
     vdp_reg[6] = 0x07;  /* sprite pat  @ 0x3800 (0x07 << 11) */
-    vdp_reg[7] = 0x0F;  /* fondo negro, borde negro */
+    vdp_reg[7] = 0x01;  /* fondo negro, borde negro */
 
     update_vdp_addresses();
 
@@ -252,6 +252,12 @@ void hal_quit(void)
 
 /* Flag persistente de quit — una vez activado, nunca se desactiva */
 static bool g_quit_requested = false;
+
+/* Latch para teclas F1/F2 (se consume al leer con hal_read_special_key) */
+static uint8_t g_special_key_latch = 0;
+
+/* Latch para teclas WASD (se consume al leer con hal_read_wasd_dir) */
+static uint8_t g_wasd_dir_latch = 0;
 
 /* ==========================================================================
  * CONSULTA DE ESTADO — sin consumir eventos
@@ -287,12 +293,11 @@ bool hal_poll_events(void)
      */
     const uint8_t *keys = SDL_GetKeyboardState(NULL);
 
-    bool up    = keys[SDL_SCANCODE_UP]    || keys[SDL_SCANCODE_W];
-    bool down  = keys[SDL_SCANCODE_DOWN]  || keys[SDL_SCANCODE_S];
-    bool left  = keys[SDL_SCANCODE_LEFT]  || keys[SDL_SCANCODE_A];
-    bool right = keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D];
-    bool fire  = keys[SDL_SCANCODE_Z]     || keys[SDL_SCANCODE_SPACE]
-              || keys[SDL_SCANCODE_LCTRL];
+    bool up    = keys[SDL_SCANCODE_UP];
+    bool down  = keys[SDL_SCANCODE_DOWN];
+    bool left  = keys[SDL_SCANCODE_LEFT];
+    bool right = keys[SDL_SCANCODE_RIGHT];
+    bool fire  = keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_LCTRL];
 
     uint8_t dir = 0;
     if (up    && !left && !right) dir = 1;
@@ -307,6 +312,31 @@ bool hal_poll_events(void)
     /* bit 0 = fire1, bits[4:1] = no usados aquí */
     joy_state[0] = dir | (fire ? 0x10 : 0x00);
     joy_state[1] = 0;
+
+    /* F1/F2 edge detection con latch (se consume en hal_read_special_key) */
+    {
+        static bool prev_f1 = false, prev_f2 = false;
+        bool f1 = keys[SDL_SCANCODE_F1];
+        bool f2 = keys[SDL_SCANCODE_F2];
+        if (f1 && !prev_f1) g_special_key_latch = 1;
+        else if (f2 && !prev_f2) g_special_key_latch = 2;
+        prev_f1 = f1;
+        prev_f2 = f2;
+    }
+
+    /* WASD edge detection (teleport extra, se consume en hal_read_wasd_dir) */
+    {
+        static bool prev_w = false, prev_a = false, prev_s = false, prev_d = false;
+        bool w = keys[SDL_SCANCODE_W];
+        bool a = keys[SDL_SCANCODE_A];
+        bool s = keys[SDL_SCANCODE_S];
+        bool d = keys[SDL_SCANCODE_D];
+        if (w && !prev_w) g_wasd_dir_latch = 1;
+        else if (a && !prev_a) g_wasd_dir_latch = 2;
+        else if (s && !prev_s) g_wasd_dir_latch = 3;
+        else if (d && !prev_d) g_wasd_dir_latch = 4;
+        prev_w = w; prev_a = a; prev_s = s; prev_d = d;
+    }
 
     return true;
 }
@@ -346,12 +376,13 @@ void hal_vdp_write_reg(uint8_t reg, uint8_t val)
 
 void hal_vdp_write_vram(uint16_t addr, uint8_t val)
 {
-    /* Pattern table (0x0000-0x17FF) → g_bg_tiles, ignore third */
+    /* Pattern table (0x0000-0x17FF) → g_bg_tiles[tercio * 256 + idx] */
     if (addr < 0x1800u) {
-        uint16_t off = addr % 0x0800u;
-        uint8_t  idx = (uint8_t)(off / 8u);
-        uint8_t  row = (uint8_t)(off % 8u);
-        g_bg_tiles[idx][row * 2u] = val;
+        uint8_t  third = (uint8_t)(addr >> 11u);
+        uint16_t off   = addr & 0x07FFu;
+        uint8_t  idx   = (uint8_t)(off / 8u);
+        uint8_t  row   = (uint8_t)(off % 8u);
+        g_bg_tiles[(uint16_t)third * 256u + idx][row * 2u] = val;
         return;
     }
     /* Name table (0x1800-0x1AFF) → g_screen_buf */
@@ -360,12 +391,14 @@ void hal_vdp_write_vram(uint16_t addr, uint8_t val)
         screen_put((uint8_t)(off % 32u), (uint8_t)(off / 32u), val);
         return;
     }
-    /* Color table (0x2000-0x37FF) → g_bg_tiles, ignore third */
+    /* Color table (0x2000-0x37FF) → g_bg_tiles[tercio * 256 + idx] */
     if (addr >= 0x2000u && addr < 0x3800u) {
-        uint16_t off = (addr - 0x2000u) % 0x0800u;
-        uint8_t  idx = (uint8_t)(off / 8u);
-        uint8_t  row = (uint8_t)(off % 8u);
-        g_bg_tiles[idx][row * 2u + 1u] = val;
+        uint16_t col_off = addr - 0x2000u;
+        uint8_t  third   = (uint8_t)(col_off >> 11u);
+        uint16_t off     = col_off & 0x07FFu;
+        uint8_t  idx     = (uint8_t)(off / 8u);
+        uint8_t  row     = (uint8_t)(off % 8u);
+        g_bg_tiles[(uint16_t)third * 256u + idx][row * 2u + 1u] = val;
         return;
     }
     /* Everything else (sprites, etc.) → vram */
@@ -376,10 +409,11 @@ uint8_t hal_vdp_read_vram(uint16_t addr)
 {
     /* Pattern table → g_bg_tiles */
     if (addr < 0x1800u) {
-        uint16_t off = addr % 0x0800u;
-        uint8_t  idx = (uint8_t)(off / 8u);
-        uint8_t  row = (uint8_t)(off % 8u);
-        return g_bg_tiles[idx][row * 2u];
+        uint8_t  third = (uint8_t)(addr >> 11u);
+        uint16_t off   = addr & 0x07FFu;
+        uint8_t  idx   = (uint8_t)(off / 8u);
+        uint8_t  row   = (uint8_t)(off % 8u);
+        return g_bg_tiles[(uint16_t)third * 256u + idx][row * 2u];
     }
     /* Name table → g_screen_buf */
     if (addr >= 0x1800u && addr < 0x1B00u) {
@@ -388,11 +422,12 @@ uint8_t hal_vdp_read_vram(uint16_t addr)
     }
     /* Color table → g_bg_tiles */
     if (addr >= 0x2000u && addr < 0x3800u) {
-        uint16_t off = (addr - 0x2000u) % 0x0800u;
-        uint8_t  idx = (uint8_t)(off / 8u);
-        uint8_t  row = (uint8_t)(off % 8u);
-        return g_bg_tiles[idx][row * 2u + 1u];
-        return 0;
+        uint16_t col_off = addr - 0x2000u;
+        uint8_t  third   = (uint8_t)(col_off >> 11u);
+        uint16_t off     = col_off & 0x07FFu;
+        uint8_t  idx     = (uint8_t)(off / 8u);
+        uint8_t  row     = (uint8_t)(off % 8u);
+        return g_bg_tiles[(uint16_t)third * 256u + idx][row * 2u + 1u];
     }
     return vram[addr & (VRAM_SIZE - 1u)];
 }
@@ -458,7 +493,7 @@ void hal_vdp_clear_sprites(void)
  *
  * Ya no se usa VRAM para pattern/color table. El renderizado lee:
  *   - g_screen_buf[32×24] para los índices de tiles
- *   - g_bg_tiles[256][16] para los datos de cada tile (formato intercalado)
+ *   - g_bg_tiles[768][16] para los datos de cada tile (formato intercalado, 3 tercios)
  *   - vram[] solo para sprites (attr + pattern)
  * ========================================================================== */
 
@@ -775,6 +810,34 @@ bool hal_key_pressed(void)
 {
     /* fire1 del joystick 1 OR cualquier tecla del teclado */
     return (joy_state[0] & 0x10u) != 0;
+}
+
+uint8_t hal_read_special_key(void)
+{
+    uint8_t val = g_special_key_latch;
+    g_special_key_latch = 0;
+    return val;
+}
+
+bool hal_is_ctrl_held(void)
+{
+    const uint8_t *keys = SDL_GetKeyboardState(NULL);
+    return keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_RCTRL];
+}
+
+bool hal_is_graph_held(void)
+{
+    const uint8_t *keys = SDL_GetKeyboardState(NULL);
+    /* En MSX no hay Alt, la tecla GRAPH está en row 6 bit 7.
+     * En PC usamos Alt (LALT/RALT) como proxy. */
+    return keys[SDL_SCANCODE_LALT] || keys[SDL_SCANCODE_RALT];
+}
+
+uint8_t hal_read_wasd_dir(void)
+{
+    uint8_t val = g_wasd_dir_latch;
+    g_wasd_dir_latch = 0;
+    return val;
 }
 
 /* ==========================================================================

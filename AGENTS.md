@@ -61,7 +61,10 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 
 ## Controls
 
-Arrows/WASD = move, Z/Space/Ctrl = fire, X = fire2, Esc = quit.
+Arrows = move, Space = jump/action, Esc = quit.
+F1 = suicide, F2 = game over.
+Hold Ctrl = 2x speed, Ctrl+Alt(GRAPH) = 4x speed.
+WASD = teleport between rooms (port extra, boundary checked).
 
 ## Windows Build
 
@@ -102,3 +105,8 @@ MSVC flags: `/W4 /WX- /wd4996`. GCC/Clang: `-Wall -Wextra -Wno-unused-parameter 
 - Tiles 0x00-0x72 in **tercio 0 never change** — loaded once from ROM via TILE_MAP
 
 **Init order:** `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`
+
+## Known Issues
+
+- **HUD overlay text is garbled.** `camera_draw_string()` uses Z80 formula `chr-0x30+0x5D` mapping letters to tiles 0x6E-0x87, but TILE_MAP loads font at 0x59-0x72 and logo body at 0x73-0xB8. Only tile 0x6E was patched (copy 'A' from 0x59); that workaround was removed. All HUD strings ("DEMO", "GAME", "NO", "MAP") render wrong patterns. Fix: load font to 0x6E-0x87 and/or adjust formula to match TILE_MAP layout.
+- **Room tilesets.** `load_tileset()` in room.c only loads 28 tiles of BG1_MAIN (0x27-0x42) for thirds 1-2. Z80 also loads tiles 0x43-0x9E from ROM via sub_549D. Room-script tile references outside BG1_MAIN show wrong patterns.

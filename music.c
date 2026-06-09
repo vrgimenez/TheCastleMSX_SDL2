@@ -459,9 +459,30 @@ void music_play_title(void)
 
 void music_play_game(void)
 {
-    music_load(0x7A73u, 0x7A8Fu);
+    music_load(0x7964u, 0x7993u);
+    music_set_tempo(0x02u, 0x00u);
+    music_set_transpose(0x0Cu, 0u);
+}
+
+void music_play_underwater(void)
+{
+    music_load(0x7964u, 0x7993u);
     music_set_tempo(0x04u, 0x00u);
-    music_set_transpose(0u, 0u);
+    music_set_transpose(0x07u, 0u);
+}
+
+void music_play_immortality(void)
+{
+    music_load(0x7964u, 0x7993u);
+    music_set_tempo(0x06u, 0x00u);
+    music_set_transpose(0x00u, 0u);
+}
+
+void music_play_song2(void)
+{
+    music_load(0x79B7u, 0x79DEu);
+    music_set_tempo(0x02u, 0x00u);
+    music_set_transpose(0x0Cu, 0u);
 }
 
 void music_stop(void)

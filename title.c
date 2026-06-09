@@ -128,12 +128,17 @@ static void vdp_clear_row(uint8_t row)
  *   'A'..'Z' → tiles 0x6E..0x87
  *   '['      → tile 0x88
  * ========================================================================== */
+/* sub_4C5C tile conversion for credit text (RAW ASCII, NOT room-script encoding)
+ * Letters A-Z (and symbols like '['): chr - 0x41 + tile_base → tiles 0x01-0x1C
+ * Digits 0-9: chr - 0x30 + 0x1D → tiles 0x1D-0x26
+ * Space → 0x00 (blank)
+ */
 static uint8_t char_to_tile(uint8_t chr, uint8_t tile_base)
 {
-    (void)tile_base;
     if (chr == 0x20u) return 0x00u;
-    if (chr >= 0x30u) return (uint8_t)(chr - 0x30u + 0x5Du);
-    return (uint8_t)(chr - 0x41u + tile_base);
+    if (chr >= 0x41u) return (uint8_t)(chr - 0x41u + tile_base);
+    if (chr >= 0x30u) return (uint8_t)(chr - 0x30u + 0x1Du);
+    return 0x00u;
 }
 
 /* ==========================================================================
@@ -210,9 +215,11 @@ static void curtain_wipe(void)
 
 static void load_title_tiles(void)
 {
-    tiles_vram_from_rom(0x8056u, 0x73u, 70u);
-    tiles_vram_from_rom(0x86F6u, 0x5Du, 10u);
-    tiles_vram_from_rom(0x8796u, 0x6Eu, 28u);
+    for (uint16_t third = 1u; third < 3u; third++) {
+        tiles_vram_from_rom(0x8056u, (uint16_t)(third * 256u + 0x73u), 70u);
+        tiles_vram_from_rom(0x86F6u, (uint16_t)(third * 256u + 0x1Du), 10u);
+        tiles_vram_from_rom(0x8796u, (uint16_t)(third * 256u + 0x01u), 28u);
+    }
 }
 
 /* ==========================================================================
@@ -620,7 +627,7 @@ void title_screen(void)
     /* sub_4AE2: preparar VRAM (NO toca rows 0-3, el HUD persiste) */
     intro_prepare_vram();
 
-    tiles_reload_all();
+    // tiles_reload_all();
 
     /* Cargar logo, font y dígitos de crédito desde ROM */
     load_title_tiles();

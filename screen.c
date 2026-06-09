@@ -4,7 +4,7 @@
 #include "hal.h"
 
 uint8_t g_screen_buf[SCREEN_ROWS][SCREEN_COLS];
-uint8_t g_bg_tiles[256][16];
+uint8_t g_bg_tiles[768][16];
 uint32_t g_palette[16];
 
 static uint8_t s_border = 0;
@@ -13,7 +13,7 @@ void screen_init(void)
 {
     memset(g_screen_buf, 0, sizeof(g_screen_buf));
     memset(g_bg_tiles, 0, sizeof(g_bg_tiles));
-    for (int i = 0; i < 256; i++)
+    for (int i = 0; i < 768; i++)
         for (int r = 0; r < 8; r++)
             g_bg_tiles[i][r * 2 + 1] = 0x11;
     s_border = 0;
@@ -51,8 +51,8 @@ void screen_put_tile(uint32_t *fb, int fb_w,
         uint8_t col   = tile[row * 2 + 1];
         uint8_t ink   = (col >> 4) & 0x0F;
         uint8_t paper = col & 0x0F;
-        uint32_t ink_rgba   = g_palette[ink   ? ink   : s_border];
-        uint32_t paper_rgba = g_palette[paper ? paper : s_border];
+        uint32_t ink_rgba   = g_palette[ink];
+        uint32_t paper_rgba = g_palette[paper];
         int py2 = py + row;
         if (py2 < 0 || py2 >= 192) continue;
         for (int bit = 7; bit >= 0; bit--) {
@@ -85,11 +85,12 @@ void screen_render(uint32_t *fb, int fb_w, int fb_h)
     for (int i = 0; i < fb_w * fb_h; i++)
         fb[i] = border_rgba;
 
-    /* Render background tiles */
+    /* Render background tiles per third (cada 8 filas = 1 tercio) */
     for (int row = 0; row < SCREEN_ROWS; row++) {
+        int third = row / 8;
         for (int col = 0; col < SCREEN_COLS; col++) {
             uint8_t idx = g_screen_buf[row][col];
-            screen_put_tile(fb, fb_w, g_bg_tiles[idx],
+            screen_put_tile(fb, fb_w, g_bg_tiles[third * 256 + idx],
                            col * 8, row * 8);
         }
     }

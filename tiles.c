@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "hal.h"
+#include "screen.h"
 #include "game.h"
 
 #define VRAM_PAT_BASE   0x0000u
@@ -34,7 +35,7 @@ static const struct {
 };
 #define N_MAPS (sizeof(TILE_MAP)/sizeof(TILE_MAP[0]))
 
-static void write_tile_to_vdp(uint8_t src_idx, uint8_t dst_idx)
+static void write_tile_to_vdp(uint8_t src_idx, uint16_t dst_idx)
 {
     uint16_t pat = (uint16_t)(VRAM_PAT_BASE + dst_idx * 8u);
     uint16_t col = (uint16_t)(VRAM_COL_BASE + dst_idx * 8u);
@@ -49,7 +50,7 @@ static void write_tile_to_vdp(uint8_t src_idx, uint8_t dst_idx)
  * La ROM solo contiene 2 tiles de llave en 0x9A56/0x9A66 (dark blue).
  * La rutina Z80 original genera 5 copias adicionales cambiando el ink.
  * ========================================================================== */
-static const uint8_t KEY_INKS[6] = { 0x4, 0x6, 0xD, 0x2, 0x7, 0xA };
+static const uint8_t KEY_INKS[6] = { 0x4, 0x8, 0xD, 0x2, 0x7, 0xA };
 
 static void tiles_load_keys(void)
 {
@@ -98,22 +99,52 @@ void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size)
     hal_vdp_fill_vram(VRAM_COL_BASE,  0x00u, 0x1800u);
     hal_vdp_fill_vram(VRAM_NAME_BASE, 0x00u, 768u);
 
-    for (uint16_t i = 0u; i < 256; i++)
-        write_tile_to_vdp((uint8_t)i, (uint8_t)i);
+    for (uint16_t third = 0u; third < 3u; third++)
+        for (uint16_t i = 0u; i < 256u; i++)
+            write_tile_to_vdp((uint8_t)i, third * 256u + i);
 }
 
 void tiles_reload_all(void)
 {
-    for (uint16_t i = 0u; i < 256; i++)
-        write_tile_to_vdp((uint8_t)i, (uint8_t)i);
+    for (uint16_t third = 0u; third < 3u; third++)
+        for (uint16_t i = 0u; i < 256u; i++)
+            write_tile_to_vdp((uint8_t)i, third * 256u + i);
 }
 
 void tiles_reload_walls_and_anim(void)
 {
     for (uint8_t i = 0u; i < 26u; i++)
-        write_tile_to_vdp((uint8_t)(0x59u + i), (uint8_t)(0x59u + i));
+        write_tile_to_vdp((uint8_t)(0x59u + i), (uint16_t)(0x59u + i));
     for (uint8_t i = 0u; i < 10u; i++)
-        write_tile_to_vdp((uint8_t)(0x47u + i), (uint8_t)(0x47u + i));
+        write_tile_to_vdp((uint8_t)(0x47u + i), (uint16_t)(0x47u + i));
+}
+
+void tiles_load_walls_and_anim(uint16_t vram_idx)
+{
+    /* WALLS (28 tiles) @ ROM 0x8796 → vram_idx, igual que sub_4E91 */
+    tiles_rom_to_vram(0x8796u, vram_idx, 28u);
+    /* ANIM_BG (10 tiles) @ ROM 0x86F6 → vram_idx + 28 */
+    tiles_rom_to_vram(0x86F6u, (uint16_t)(vram_idx + 28u), 10u);
+}
+
+/* sub_549D: copia `count` tiles de solo patrones (8 bytes/tile) desde
+ * ROM a VRAM, color fijo `color`. Los datos en ROM son raw pattern bytes,
+ * NO interleaved (a diferencia de tiles_rom_to_vram que lee 16 bytes/tile).
+ * Las escrituras van a g_bg_tiles via hal_vdp_write_vram. */
+void tiles_load_patterns(uint32_t rom_off, uint16_t vram_idx,
+                         uint8_t count, uint8_t color)
+{
+    for (uint8_t i = 0; i < count; i++) {
+        uint16_t vi = (uint16_t)(vram_idx + i);
+        uint32_t off = rom_off + (uint32_t)i * 8u;
+        if (off + 8u > g_rom_size) break;
+        uint16_t pat = (uint16_t)(VRAM_PAT_BASE + vi * 8u);
+        uint16_t col = (uint16_t)(VRAM_COL_BASE + vi * 8u);
+        for (uint8_t row = 0; row < 8u; row++) {
+            hal_vdp_write_vram((uint16_t)(pat + row), g_rom[off + row]);
+            hal_vdp_write_vram((uint16_t)(col + row), color);
+        }
+    }
 }
 
 void tiles_animate(uint8_t frame_counter)
@@ -125,20 +156,25 @@ void tiles_animate(uint8_t frame_counter)
     write_tile_to_vdp(next_src, dst);
 }
 
-void tiles_rom_to_vram(uint32_t rom_file_off, uint8_t vram_start,
+//R La mas parecida a sub_64AB
+void tiles_rom_to_vram(uint32_t rom_file_off, uint16_t vram_idx,
                        uint8_t count)
 {
     if (rom_file_off >= 0x4000u) rom_file_off -= 0x4000u;
     if (rom_file_off + (uint32_t)count * 16u > g_rom_size) return;
     for (uint8_t i = 0; i < count; i++) {
-        uint8_t  tile_idx = (uint8_t)(vram_start + i);
-        uint32_t off      = rom_file_off + (uint32_t)i * 16u;
-        for (uint8_t row = 0; row < 8u; row++) {
-            g_tiles[tile_idx][row * 2u]     = g_rom[off + (uint32_t)row * 2u];
-            g_tiles[tile_idx][row * 2u + 1u] = g_rom[off + (uint32_t)row * 2u + 1u];
+        uint16_t vi = (uint16_t)(vram_idx + i);
+        uint32_t off = rom_file_off + (uint32_t)i * 16u;
+        /* Caché g_tiles solo para tercio 0 */
+        if (vi < 256u) {
+            uint8_t ti = (uint8_t)vi;
+            for (uint8_t row = 0; row < 8u; row++) {
+                g_tiles[ti][row * 2u]      = g_rom[off + (uint32_t)row * 2u];
+                g_tiles[ti][row * 2u + 1u] = g_rom[off + (uint32_t)row * 2u + 1u];
+            }
         }
-        uint16_t pat = (uint16_t)(VRAM_PAT_BASE + tile_idx * 8u);
-        uint16_t col = (uint16_t)(VRAM_COL_BASE + tile_idx * 8u);
+        uint16_t pat = (uint16_t)(VRAM_PAT_BASE + vi * 8u);
+        uint16_t col = (uint16_t)(VRAM_COL_BASE + vi * 8u);
         for (uint8_t row = 0; row < 8u; row++) {
             hal_vdp_write_vram((uint16_t)(pat + row), g_rom[off + (uint32_t)row * 2u]);
             hal_vdp_write_vram((uint16_t)(col + row), g_rom[off + (uint32_t)row * 2u + 1u]);
@@ -146,16 +182,16 @@ void tiles_rom_to_vram(uint32_t rom_file_off, uint8_t vram_start,
     }
 }
 
-void tiles_vram_from_rom(uint32_t rom_file_off, uint8_t vram_start,
-                         uint8_t count)
+void tiles_vram_from_rom(uint32_t rom_file_off, uint16_t vram_idx,
+                          uint8_t count)
 {
     if (rom_file_off >= 0x4000u) rom_file_off -= 0x4000u;
     if (rom_file_off + (uint32_t)count * 16u > g_rom_size) return;
     for (uint8_t i = 0; i < count; i++) {
-        uint8_t  tile_idx = (uint8_t)(vram_start + i);
-        uint32_t off      = rom_file_off + (uint32_t)i * 16u;
-        uint16_t pat = (uint16_t)(VRAM_PAT_BASE + tile_idx * 8u);
-        uint16_t col = (uint16_t)(VRAM_COL_BASE + tile_idx * 8u);
+        uint16_t vi = (uint16_t)(vram_idx + i);
+        uint32_t off = rom_file_off + (uint32_t)i * 16u;
+        uint16_t pat = (uint16_t)(VRAM_PAT_BASE + vi * 8u);
+        uint16_t col = (uint16_t)(VRAM_COL_BASE + vi * 8u);
         for (uint8_t row = 0; row < 8u; row++) {
             hal_vdp_write_vram((uint16_t)(pat + row), g_rom[off + (uint32_t)row * 2u]);
             hal_vdp_write_vram((uint16_t)(col + row), g_rom[off + (uint32_t)row * 2u + 1u]);
@@ -166,14 +202,11 @@ void tiles_vram_from_rom(uint32_t rom_file_off, uint8_t vram_start,
 void tiles_dump_vram(const char *label)
 {
     char fname[64];
-    uint8_t vram[0x4000];
     FILE *fp;
-
-    snprintf(fname, sizeof(fname), "vram_%s.bin", label);
-    hal_vdp_copy_from_vram(0x0000u, vram, 0x4000);
+    snprintf(fname, sizeof(fname), "tiles_%s.bin", label);
     fp = fopen(fname, "wb");
     if (fp) {
-        fwrite(vram, 1, 0x4000, fp);
+        fwrite(g_bg_tiles, 1, sizeof(g_bg_tiles), fp);
         fclose(fp);
     }
 }

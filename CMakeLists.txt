@@ -25,7 +25,6 @@ set(GAME_SOURCES
     music.c         # Reproductor PSG AY-3-8910, ISR de música (sub_75D4 / sub_7769)
     camera.c        # Cámara, scroll, triggers de sala, render de mapa (sub_623C)
     title.c         # Pantalla de título completa con animación (sub_4A4A)
-    tiledata.c      # Arrays de tiles cargados desde ROM
     screen.c        # Screen buffer + renderer desde arrays planos
 )
 
@@ -177,8 +176,12 @@ message(STATUS "")
 message(STATUS "  Para correr:")
 message(STATUS "    ./build/the_castle [ruta/a/the_castle.rom]")
 message(STATUS "")
-message(STATUS "  Controles:")
-message(STATUS "    Cursores/WASD = mover, Z/Space/Ctrl = acción, Esc = salir")
+message(STATUS "  Controles (original MSX):")
+message(STATUS "    Cursores = mover, Space = saltar/jump")
+message(STATUS "    F1 = suicidio, F2 = perder todas las vidas (game over)")
+message(STATUS "    Hold Ctrl = 2x velocidad, Ctrl+GRAPH(Alt) = 4x velocidad")
+message(STATUS "  Extras del port:")
+message(STATUS "    WASD = teletransporte entre salas, Esc = salir")
 message(STATUS "========================================")
 message(STATUS "")
 

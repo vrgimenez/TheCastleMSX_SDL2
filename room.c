@@ -238,7 +238,7 @@ extern void tiles_load_from_rom(const uint8_t *rom_data, uint32_t rom_size);
  * por tile). Los primeros 4 descriptores (0x7BC0-0x7BC6) tienen dirección completa.
  * Los descriptores 0x7BC8+ usan formato compacto (solo byte bajo) y requieren
  * que el byte alto se determine por contexto. */
-static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
+static void load_tileset(uint16_t ts_desc_addr, uint16_t vram_idx,
                          uint8_t count)
 {
     uint16_t base_addr;
@@ -250,7 +250,7 @@ static void load_tileset(uint16_t ts_desc_addr, uint8_t vram_start,
         case 0x7BD8: base_addr = 0x9A96; break;  /* DOOR_EXTRA */
         default:     base_addr = rom_rw(ts_desc_addr); break;
     }
-    tiles_rom_to_vram(base_addr, vram_start, count);
+    tiles_rom_to_vram(base_addr, vram_idx, count);
 }
 
 /* ==========================================================================
@@ -264,23 +264,36 @@ static void room_full_load(void)
     /* Paso 1+2: limpiar tablas */
     room_clear_state();
 
-    /* Paso 3: recargar WALLS (28) + ANIM_BG (10) */
-    tiles_reload_walls_and_anim();
+    /* Paso 3: tercios 0+1+2 reciben WALLS(28)+ANIM_BG(10) (sub_4E8E) */
+    tiles_reload_walls_and_anim();                  /* tercio 0 (TILE_MAP) */
+    tiles_load_walls_and_anim(0x0101u);             /* tercio 1 (sub_4E8E) */
+    tiles_load_walls_and_anim(0x0201u);             /* tercio 2 (sub_4E91) */
 
-    load_tileset(ROM_TS_BG1_MAIN, 0x27u, 28u);
+    /* Pasos 4+6: patrones de sala a tercios 1+2 (sub_549D).
+     * Z80: 120 tiles desde (slotpage)+0x0430, color 0xF0.
+     * Tercio 0 no toca — queda con TILE_MAP. */
+    load_tileset(ROM_TS_BG1_MAIN, 0x0127u, 28u);   /* tercio 1: 0x27-0x42 */
+    load_tileset(ROM_TS_BG1_MAIN, 0x0227u, 28u);   /* tercio 2: 0x27-0x42 */
+    /* FIXME: tiles 0x43-0x9E no se cargan — falta (0xF920)
+     * En Z80 vienen de sub_549D con fuente = *(uint16*)0xF920+0x0430.
+     * Hasta entonces los scripts de sala referencian tiles fuera de
+     * BG1_MAIN (paredes en 0x59-0x72 etc.) y se ven basura. */
+
+    /* Puertas en tercio 0 (legacy: tiles_vram_idx_door()=0x0D).
+     * Z80 las carga a tercios 1+2 (0x019F/0x01AF/0x029F), pero
+     * el port aún no traduce nombre-tabla por tercio. */
     load_tileset(ROM_TS_DOOR_EXTRA, 0x9Fu, 16u);
     load_tileset(ROM_TS_DOOR, 0x0Du, 1u);
 
-    /* Paso 7: inicializar contadores de animación */
-    g_anim_ctr[0] = 0x72u;   /* (0xEA66) = 0xAF en sub_5382 original */
-    g_anim_ctr[1] = 0xAFu;   /* (0xEA67) */
-    g_anim_ctr[2] = 0x00u;   /* (0xEA68) */
+    /* Contadores de animación */
+    g_anim_ctr[0] = 0x72u;
+    g_anim_ctr[1] = 0xAFu;
+    g_anim_ctr[2] = 0x00u;
 
-    /* Paso 8: resetear contadores globales de frame y transición */
+    /* Reset contadores globales */
     g_state_flags  = 0;
     g_transition   = 0;
     g_restart_flag = 0;
-    /* (0xE343) = (0xE344) = 0 → timers de chispa */
 }
 
 /* ==========================================================================

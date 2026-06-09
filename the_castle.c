@@ -224,11 +224,11 @@ void game_init(void)
      * Here we delegate to the HAL which should load the binary data. */
     /* hal_load_tile_data(); */
 
-    /* Set up VDP color registers (from sub_4CA2 / INITXT calls in sub_4D27):
-     *   VDP R7 = 0x0F  (white on black, border)
-     *   VDP R1 bit 6 = 1 (enable screen)  -- done after init
-     */
-    hal_vdp_write_reg(7, 0x0F);
+    /* VDP R7 = border color (low nibble). En MSX real INITXT lo pone a 0x0F
+     * (borde blanco), pero ese borde está fuera del área 256×192. En nuestro
+     * port no renderizamos el borde exterior, y s_border se filtraba al área
+     * de contenido por el screen-off fill. Lo dejamos en negro (0x01). */
+    hal_vdp_write_reg(7, 0x01);
 
     /* Initialise game state */
     memset(g_score,   0, sizeof(g_score));
@@ -365,18 +365,28 @@ static void update_player(void)
         dx = dy = 0;
     }
 
-    /* sub_41F6: apply movement with collision (simplified) */
-    uint8_t new_col = (uint8_t)((int)g_player_col + dx);
-    uint8_t new_row = (uint8_t)((int)g_player_row + dy);
+    /* Speed boost: Ctrl = doble, Ctrl+GRAPH = cuádruple (original MSX) */
+    uint8_t speed_mult = 1u;
+    if (hal_is_ctrl_held()) {
+        speed_mult = 2u;
+        if (hal_is_graph_held()) speed_mult = 4u;
+    }
 
-    /* Map bounds: 20 cols (0x14), 30 rows (0x1E) — from sub_6A7C CP 0x14 / CP 0x1E */
-    if (new_col >= 0x14) new_col = g_player_col;
-    if (new_row >= 0x1E) new_row = g_player_row;
+    /* Apply movement step by step (1 tile por iteración con colisión) */
+    for (uint8_t step = 0u; step < speed_mult; step++) {
+        uint8_t new_col = (uint8_t)((int)g_player_col + dx);
+        uint8_t new_row = (uint8_t)((int)g_player_row + dy);
 
-    /* Tile collision check */
-    if (collision_check(new_col, new_row) == 0) {
-        g_player_col = new_col;
-        g_player_row = new_row;
+        /* Map bounds: 20 cols (0x14), 30 rows (0x1E) */
+        if (new_col >= 0x14) new_col = g_player_col;
+        if (new_row >= 0x1E) new_row = g_player_row;
+
+        if (collision_check(new_col, new_row) == 0) {
+            g_player_col = new_col;
+            g_player_row = new_row;
+        } else {
+            break;  /* hit a wall, stop this frame's movement */
+        }
     }
 
     /* Update animation frame (from bit manipulation in sub_40BB / sub_412B) */

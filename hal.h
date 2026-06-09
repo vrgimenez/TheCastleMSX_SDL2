@@ -115,6 +115,34 @@ uint8_t hal_joystick_read(uint8_t port);
  */
 bool    hal_key_pressed(void);
 
+/**
+ * hal_read_special_key() — Detecta pulsación única de teclas especiales.
+ * @return 0=nada, 1=F1 (suicidio), 2=F2 (game over)
+ * El evento se consume al leer (retorna 0 en sucesivas llamadas hasta
+ * que se suelte y vuelva a presionar la tecla).
+ */
+uint8_t hal_read_special_key(void);
+
+/**
+ * hal_is_ctrl_held() — ¿Ctrl está siendo presionado?
+ * En el original MSX, Ctrl mantenido duplica la velocidad.
+ */
+bool    hal_is_ctrl_held(void);
+
+/**
+ * hal_is_graph_held() — ¿GRAPH/Alt está presionado?
+ * En MSX original: Ctrl+GRAPH = triple/quad velocidad.
+ * En PC: se mapea a Alt (LALT/RALT) como proxy.
+ */
+bool    hal_is_graph_held(void);
+
+/**
+ * hal_read_wasd_dir() — Detecta pulsación única de WASD (teleport extra).
+ * @return 0=nada, 1=W, 2=A, 3=S, 4=D
+ * El evento se consume al leer.
+ */
+uint8_t hal_read_wasd_dir(void);
+
 /* ==========================================================================
  * TIMING
  * ========================================================================== */
