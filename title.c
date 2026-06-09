@@ -536,6 +536,12 @@ static void intro_prepare_vram(void)
 
     curtain_wipe();
 
+    /* Z80 sub_513B: FILVRM — clear pattern table for unified tiles 256..767
+     * (thirds 1-2). The Z80 only writes TILE_MAP to third 0 during init;
+     * thirds 1-2 pattern is cleared here, color is BIOS default 0x11. */
+    hal_vdp_fill_vram(0x0800u, 0x00u, 0x1000u);   /* pattern: thirds 1-2 */
+    hal_vdp_fill_vram(0x2800u, 0x11u, 0x1000u);   /* color:   thirds 1-2 */
+
     /* Z80 sub_4B07: sprites 8-13 en pixel (0,0) con patrón blank.
      * NO escribe al name table — no tiene equivalente en SDL. */
     // for (uint8_t col = 8u; col < 14u; col++) {
