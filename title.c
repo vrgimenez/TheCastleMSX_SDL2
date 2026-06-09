@@ -85,6 +85,13 @@
 #define LOGO_ROW_TOP     4u
 #define LOGO_ROW_BOTTOM  23u
 
+/* Modos de borrado para animate_logo_sequence */
+typedef enum {
+    LOGO_ERASE_NONE,       /* sin borrar (sub_4B7F: segunda pasada) */
+    LOGO_ERASE_FULL,       /* borrar sprite completo (sub_4BC4, C=0) */
+    LOGO_ERASE_BOTTOM,     /* borrar solo fila inferior (sub_4BC4, C=1) */
+} logo_erase_mode_t;
+
 /* ==========================================================================
  * ROM ACCESS
  * ========================================================================== */
@@ -294,23 +301,37 @@ static void logo_erase_at(uint8_t col, uint8_t row)
     }
 }
 
+/* sub_4BC4 C=1: borrar solo la fila inferior del sprite (row + 4) */
+static void logo_erase_bottom_row(uint8_t col, uint8_t row)
+{
+    uint8_t erase_row = (uint8_t)(row + 4u);
+    if (erase_row < LOGO_ROW_TOP || erase_row >= LOGO_ROW_BOTTOM) return;
+    for (uint8_t c = 0; c < 14u; c++) {
+        uint8_t dc = (uint8_t)(col + c);
+        if (dc >= 32u) continue;
+        vdp_put(dc, erase_row, 0x00u);
+    }
+}
+
 /* ==========================================================================
- * sub_4B7F — Animar logo con una secuencia de coordenadas
+ * sub_4B54 / sub_4B7F — Animar logo con una secuencia de coordenadas
  *
- * Itera la secuencia ROM en HL:
+ * Itera la secuencia ROM:
  *   sub_4BA6: leer (col, row) = (D, E)
- *     Si D == 0x80 → JR sub_4B93 (fin: retroceder 2 entradas, redibujar)
- *   sub_4BAF: dibujar logo en (D, E)
+ *     Si D == 0x80 → fin (retroceder 2 entradas, redibujar)
+ *   sub_4BAF: draw_logo_at(D, E)
  *   sub_5128: esperar 1 frame (+ comprobar fire)
- *     Si fire pulsado → NZ → g_intro_active=0, RET
- *   sub_4BC4: borrar posición anterior, dibujar en nueva
+ *   sub_4BC4: borrar posición anterior segun erase_mode
+ *     C=0 → erase_full (borrar sprite completo)
+ *     C=1 → erase_bottom (borrar solo row+4)
  *   Repetir
  *
- * Retorna:
- *   Z=1 si el logo llegó al final de la secuencia (completó el movimiento)
- *   NZ  si el jugador pulsó fire (salir del intro)
+ * erase_mode:
+ *   LOGO_ERASE_FULL   → sub_4B54 (primera pasada, borra)
+ *   LOGO_ERASE_NONE   → sub_4B7F (segunda pasada, sin borrar)
+ *   LOGO_ERASE_BOTTOM → secuencia 2 (borra solo fila inferior)
  * ========================================================================== */
-static bool animate_logo_sequence(uint16_t seq_addr, bool erase_prev, uint8_t *last_col, uint8_t *last_row)
+static bool animate_logo_sequence(uint16_t seq_addr, logo_erase_mode_t erase_mode, uint8_t *last_col, uint8_t *last_row)
 {
     uint16_t ptr = seq_addr;
     uint8_t prev_col = *last_col;
@@ -332,34 +353,38 @@ static bool animate_logo_sequence(uint16_t seq_addr, bool erase_prev, uint8_t *l
         uint8_t e = rom_rb((uint16_t)(ptr + 1u));
         ptr += 2u;
 
-        /* Borrar posición anterior */
-        if (erase_prev && (prev_col != d || prev_row != e)) {
-            logo_erase_at(prev_col, prev_row);
-        }
-
-        /* Dibujar en nueva posición */
+        /* sub_4BAF: Dibujar logo en nueva posición */
         draw_logo_at(d, e);
 
-        prev_col = d;
-        prev_row = e;
-
-        /* Esperar 1 frame y comprobar input */
+        /* sub_5128: Esperar 1 frame y comprobar input */
         hal_wait_vsync();
         hal_poll_events();
 
         if (!hal_is_running()) {
             g_intro_active = 0;
-            *last_col = prev_col;
-            *last_row = prev_row;
+            *last_col = d;
+            *last_row = e;
             return false;
         }
 
         if (hal_key_pressed()) {
             g_intro_active = 0;
-            *last_col = prev_col;
-            *last_row = prev_row;
-            return false;  /* jugador interrumpió */
+            *last_col = d;
+            *last_row = e;
+            return false;
         }
+
+        /* sub_4BC4: Borrar posición anterior */
+        if (prev_col != d || prev_row != e) {
+            if (erase_mode == LOGO_ERASE_FULL) {
+                logo_erase_at(prev_col, prev_row);
+            } else if (erase_mode == LOGO_ERASE_BOTTOM) {
+                logo_erase_bottom_row(prev_col, prev_row);
+            }
+        }
+
+        prev_col = d;
+        prev_row = e;
     }
 }
 
@@ -383,22 +408,22 @@ static bool title_animate_logo(void)
     uint8_t last_col = 0xFDu;  /* posición inicial (fuera de pantalla) */
     uint8_t last_row = 0x00u;
 
-    /* Secuencia 1: espiral exterior */
-    if (!animate_logo_sequence(ROM_LOGO_SEQ1, false, &last_col, &last_row))
+    /* Secuencia 1: espiral exterior (sub_4B54: borra posición anterior) */
+    if (!animate_logo_sequence(ROM_LOGO_SEQ1, LOGO_ERASE_FULL, &last_col, &last_row))
         return false;  /* jugador interrumpió */
 
     if (g_intro_active == 0) return false;
 
-    /* Segunda pasada de secuencia 1 (sin borrar — fija el logo) */
+    /* Segunda pasada: sub_4B7F(HL, C=0) — sin borrar, fija el trail */
     last_col = 0xFDu;
     last_row = 0x00u;
-    if (!animate_logo_sequence(ROM_LOGO_SEQ1, false, &last_col, &last_row))
+    if (!animate_logo_sequence(ROM_LOGO_SEQ1, LOGO_ERASE_NONE, &last_col, &last_row))
         return false;
 
     if (g_intro_active == 0) return false;
 
-    /* Secuencia 2: núcleo (col=0x09, filas 0x0C..0x06) */
-    if (!animate_logo_sequence(ROM_LOGO_SEQ2, false, &last_col, &last_row))
+    /* Secuencia 2: núcleo (sub_4BC4 C=1 — borra solo fila inferior) */
+    if (!animate_logo_sequence(ROM_LOGO_SEQ2, LOGO_ERASE_BOTTOM, &last_col, &last_row))
         return false;
 
     return g_intro_active != 0;
