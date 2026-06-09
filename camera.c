@@ -763,8 +763,10 @@ void camera_draw_string(uint8_t col, uint8_t row,
         uint8_t tile;
         if (byte == 0x20u) {
             tile = 0u;  /* espacio */
-        } else if (byte >= 0x30u) {
-            tile = (uint8_t)(byte - 0x30u + 0x5Du);  /* Z80: chr - 0x30 + 0x5D */
+        } else if (byte >= 0x30u && byte <= 0x39u) {
+            tile = (uint8_t)(byte - 0x30u + 0x47u);  /* digits: TILE_MAP 0x47-0x50 */
+        } else if (byte >= 0x41u) {
+            tile = (uint8_t)(byte - 0x41u + 0x59u);  /* letters: TILE_MAP 0x59-0x72 */
         } else {
             tile = (uint8_t)(byte - 0x41u + tile_base);  /* fallthrough chr < 0x30 */
         }

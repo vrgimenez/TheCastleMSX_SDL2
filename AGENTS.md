@@ -35,7 +35,7 @@ Defaults: RelWithDebInfo build type. ROM is copied to `build/the_castle.rom` by 
 - **`LD HL,(0xF3CD)`** loads `GRPATR` (sprite attribute table base, set by INIGRP/SETGRP at init). Used in `sub_6EAE` to calculate sprite entry address.
 - **`sub_4B07`** in Z80: positions sprites 8-13 at pixel (Y=0, X=0) with blank pattern — does NOT write to name table. No SDL equivalent (commented out in `intro_prepare_vram()` and `intro_cleanup()`).
 - **Init order matters:** `hal_init` → `tiles_load_from_rom` → `game_init` → `enemies_init` → `particles_init` → `doors_init` → `music_init` → `camera_init` → `main_loop`.
-- **`char_to_tile` Z80 formula (sub_62B0):** `chr - 0x30 + 0x5D` for ALL chr ≥ 0x30 (digits AND letters). `RET NC` means the letter case (`SUB 0x41, ADD C`) is ONLY for chr < 0x30 (punctuation). Two copies: `title.c:char_to_tile()` and `camera.c:camera_draw_string()` — both now match the Z80. `room.c` room scripts use a DIFFERENT encoding scheme.
+- **`char_to_tile` Z80 formula (sub_62B0):** `chr - 0x30 + 0x5D` for ALL chr ≥ 0x30 (digits AND letters). `RET NC` means the letter case (`SUB 0x41, ADD C`) is ONLY for chr < 0x30 (punctuation). The port's `title.c:char_to_tile()` retains the original Z80 formula. `camera.c:camera_draw_string()` was adapted to TILE_MAP positions: digits 0x30-0x39 → tiles 0x47-0x50 (`chr-0x30+0x47`), letters ≥0x41 → tiles 0x59-0x72 (`chr-0x41+0x59`). `room.c` room scripts use a DIFFERENT encoding scheme.
 - **Credit text tile map (Z80 char_to_tile, thirds 1-2):**
   - `'0'..'9'` → VRAM tiles **0x5D..0x66**
   - `'A'..'Z'` → VRAM tiles **0x6E..0x87**
@@ -108,5 +108,4 @@ MSVC flags: `/W4 /WX- /wd4996`. GCC/Clang: `-Wall -Wextra -Wno-unused-parameter 
 
 ## Known Issues
 
-- **HUD overlay text is garbled.** `camera_draw_string()` uses Z80 formula `chr-0x30+0x5D` mapping letters to tiles 0x6E-0x87, but TILE_MAP loads font at 0x59-0x72 and logo body at 0x73-0xB8. Only tile 0x6E was patched (copy 'A' from 0x59); that workaround was removed. All HUD strings ("DEMO", "GAME", "NO", "MAP") render wrong patterns. Fix: load font to 0x6E-0x87 and/or adjust formula to match TILE_MAP layout.
 - **Room tilesets.** `load_tileset()` in room.c only loads 28 tiles of BG1_MAIN (0x27-0x42) for thirds 1-2. Z80 also loads tiles 0x43-0x9E from ROM via sub_549D. Room-script tile references outside BG1_MAIN show wrong patterns.
