@@ -321,21 +321,19 @@ static void logo_erase_bottom_row(uint8_t col, uint8_t row)
  *     Si D == 0x80 → fin (retroceder 2 entradas, redibujar)
  *   sub_4BAF: draw_logo_at(D, E)
  *   sub_5128: esperar 1 frame (+ comprobar fire)
- *   sub_4BC4: borrar posición anterior segun erase_mode
- *     C=0 → erase_full (borrar sprite completo)
- *     C=1 → erase_bottom (borrar solo row+4)
+ *   sub_4BC4: borrar posición ACTUAL segun erase_mode
+ *     C=0 → erase_full (D=0x00, dibujar blank sobre sprite completo)
+ *     C=1 → erase_bottom (borrar solo row+4 del sprite actual)
  *   Repetir
  *
  * erase_mode:
- *   LOGO_ERASE_FULL   → sub_4B54 (primera pasada, borra)
- *   LOGO_ERASE_NONE   → sub_4B7F (segunda pasada, sin borrar)
- *   LOGO_ERASE_BOTTOM → secuencia 2 (borra solo fila inferior)
+ *   LOGO_ERASE_NONE   → sub_4B4C (primera pasada, solo dibuja, sin borrar)
+ *   LOGO_ERASE_FULL   → sub_4B7F C=0 (segunda pasada, borra actual con blank)
+ *   LOGO_ERASE_BOTTOM → sub_4B7F C=1 (tercera pasada, borra fila inferior)
  * ========================================================================== */
 static bool animate_logo_sequence(uint16_t seq_addr, logo_erase_mode_t erase_mode, uint8_t *last_col, uint8_t *last_row)
 {
     uint16_t ptr = seq_addr;
-    uint8_t prev_col = *last_col;
-    uint8_t prev_row = *last_row;
 
     while (true) {
         /* sub_4BA6: leer siguiente entrada */
@@ -374,17 +372,12 @@ static bool animate_logo_sequence(uint16_t seq_addr, logo_erase_mode_t erase_mod
             return false;
         }
 
-        /* sub_4BC4: Borrar posición anterior */
-        if (prev_col != d || prev_row != e) {
-            if (erase_mode == LOGO_ERASE_FULL) {
-                logo_erase_at(prev_col, prev_row);
-            } else if (erase_mode == LOGO_ERASE_BOTTOM) {
-                logo_erase_bottom_row(prev_col, prev_row);
-            }
+        /* sub_4BC4: Borrar posición ACTUAL (D=0 blank) */
+        if (erase_mode == LOGO_ERASE_FULL) {
+            logo_erase_at(d, e);
+        } else if (erase_mode == LOGO_ERASE_BOTTOM) {
+            logo_erase_bottom_row(d, e);
         }
-
-        prev_col = d;
-        prev_row = e;
     }
 }
 
@@ -408,21 +401,21 @@ static bool title_animate_logo(void)
     uint8_t last_col = 0xFDu;  /* posición inicial (fuera de pantalla) */
     uint8_t last_row = 0x00u;
 
-    /* Secuencia 1: espiral exterior (sub_4B54: borra posición anterior) */
-    if (!animate_logo_sequence(ROM_LOGO_SEQ1, LOGO_ERASE_FULL, &last_col, &last_row))
-        return false;  /* jugador interrumpió */
-
-    if (g_intro_active == 0) return false;
-
-    /* Segunda pasada: sub_4B7F(HL, C=0) — sin borrar, fija el trail */
-    last_col = 0xFDu;
-    last_row = 0x00u;
+    /* Primera pasada: sub_4B4C — solo dibuja, SIN borrar (acumula trail) */
     if (!animate_logo_sequence(ROM_LOGO_SEQ1, LOGO_ERASE_NONE, &last_col, &last_row))
         return false;
 
     if (g_intro_active == 0) return false;
 
-    /* Secuencia 2: núcleo (sub_4BC4 C=1 — borra solo fila inferior) */
+    /* Segunda pasada: sub_4B7F(HL, C=0) — dibuja, espera, borra ACTUAL con blank */
+    last_col = 0xFDu;
+    last_row = 0x00u;
+    if (!animate_logo_sequence(ROM_LOGO_SEQ1, LOGO_ERASE_FULL, &last_col, &last_row))
+        return false;
+
+    if (g_intro_active == 0) return false;
+
+    /* Secuencia 2: sub_4B7F(HL, C=1) — borra solo fila inferior de posición ACTUAL */
     if (!animate_logo_sequence(ROM_LOGO_SEQ2, LOGO_ERASE_BOTTOM, &last_col, &last_row))
         return false;
 
