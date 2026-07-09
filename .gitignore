@@ -3,3 +3,7 @@
 build/
 vram/
 *.exe
+*.bin
+
+# Title screen VRAM dump (generated at runtime)
+tiles_title_init.*

@@ -126,7 +126,26 @@ void room_init(void);
 void room_load_initial(void);
 void room_load_title(void);
 void room_transition(void);
+void room_full_load(void);
 bool room_script_tick(void);
+extern uint8_t g_object_table[]; /* 0xE346, size 0x150 */
+
+/* --- pickup.c --- */
+void pickup_init(void);
+void pickup_frame(void);
+void pickup_anim_frame(void);
+void minimap_draw_full(void);
+void minimap_room_exit_mark(void);
+uint8_t pickup_any_key(void);
+extern uint8_t g_keys[6];        /* 0xE337-0xE33C */
+extern uint8_t g_power_red;      /* 0xE343 */
+extern uint8_t g_power_green;    /* 0xE344 */
+extern uint8_t g_door_reset;     /* 0xEAE2 */
+
+/* --- the_castle.c (exposed for persistence) --- */
+extern uint8_t g_subpixel_x;     /* 0xE322 */
+extern uint8_t g_dir_timer;      /* 0xE323 */
+extern uint8_t g_enemy_slots[9]; /* 0xE325..0xE32D */
 
 /* --- music.c --- */
 void music_init(void);

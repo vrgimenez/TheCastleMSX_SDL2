@@ -35,11 +35,11 @@ static const uint8_t *g_music_ptr  = NULL; /* 0xEAE5 */
 static uint8_t        g_music_ticks = 0;   /* 0xEAE7 */
 static uint8_t        g_sprites[32 * 4];   /* sprite attr shadow */
 uint8_t               g_keyframe_queue[9]; /* 0xEACD */
-static uint8_t        g_subpixel_x  = 0;   /* 0xE322 */
-static uint8_t        g_dir_timer   = 0;   /* 0xE323 */
+uint8_t        g_subpixel_x  = 0;   /* 0xE322 */
+uint8_t        g_dir_timer   = 0;   /* 0xE323 */
 static uint8_t        g_scroll_x    = 0;   /* 0xE331 */
 static uint8_t        g_scroll_y    = 0;   /* 0xE332 */
-static uint8_t        g_enemy_slots[9];    /* 0xE325..0xE32D */
+uint8_t        g_enemy_slots[9];    /* 0xE325..0xE32D */
 static const uint8_t *g_tile_data_ptr = NULL; /* 0xEAD7 */
 static uint16_t       g_vram_name_base  = 0x1800u;
 static uint16_t       g_vram_color_base = 0x2000u;

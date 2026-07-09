@@ -125,6 +125,34 @@ MSVC flags: `/W4 /WX- /wd4996`. GCC/Clang: `-Wall -Wextra -Wno-unused-parameter 
 **Uncommitted changes (`room.c`):**
 - Fixed WALLS/ANIM_BG VRAM indices: 0x0101→0x0159 (WALLS tercio 1), 0x0147 (ANIM tercio 1), 0x0259/0x0247 (tercio 2)
 
+### 2026-07-09 — Cell-based pickup system (pickup.c)
+
+**New module:** `pickup.c` — port of DF0's cell-based pickup (Z80 `sub_5B96` + `sub_5BB0`).
+Replaces the old `update_collectibles()` and `check_key_pickup()` calls in `game_frame()`.
+
+**Key changes:**
+- `g_object_table` (room.c) is now **non-static** — declared `extern` in `game.h`
+- `pickup_frame()` reads ITEM table at `g_object_table[0x90..0xCF]` (offset 0x90 = Z80 0xE3D6)
+- `pickup_anim_frame()` animates special items (type 0x21) with alternating tile frames
+- `minimap_draw_full()` / `minimap_room_exit_mark()` for minimap HUD (map pickup, type 0x22)
+- HUD helpers: `hud_scores()`, `hud_lives()`, `keys_hud_redraw()` write directly to VRAM
+
+**New game state variables (in `main.c`, extern in `game.h`):**
+- `g_keys[6]` (0xE337-0xE33C) — per-color key counts
+- `g_power_red` (0xE343) — red power-up timer
+- `g_power_green` (0xE344) — green power-up counter
+- `g_door_reset` (0xEAE2) — door reset flag
+
+**Exposed from `the_castle.c` (for persistence):**
+- `g_subpixel_x` (formerly static), `g_dir_timer` (formerly static), `g_enemy_slots[]` (formerly static)
+
+**Init order:** `pickup_init()` called after `camera_init()` in `main.c:main()`.
+
+**Known limitations:**
+- Persistence commit (saving 0xE322-0xE333 to g_map bitfields) not yet implemented
+- Traps, switches, blocks, exit doors still read from old doors.c arrays (not g_object_table) — arrays are empty since shape decoder populates g_object_table instead
+- Restart handling for special items (0x20/0x21) implemented via `g_restart_flag` + `room_full_load()` at end of `game_frame()`
+
 ### 2026-06-11 — Room loading & Z80 pipeline analysis
 
 **Recent commits (4 ahead of origin):**

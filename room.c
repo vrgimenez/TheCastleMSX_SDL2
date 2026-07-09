@@ -151,7 +151,7 @@ uint8_t g_tilemap[TILEMAP_ROWS * TILEMAP_COLS];  /* 0xE496 */
 
 /* Sprite/enemy y object tables (limpiadas en sub_659B) */
 static uint8_t g_sprite_table[SPRITE_TABLE_SIZE];  /* 0xE946 */
-static uint8_t g_object_table[OBJECT_TABLE_SIZE];  /* 0xE346 */
+uint8_t g_object_table[OBJECT_TABLE_SIZE];  /* 0xE346 */
 
 /* Contadores de animación por tercio (0xEA66, 0xEA67, 0xEA68) */
 /* declarados en enemies.c como g_anim_ctr[] — aquí los referenciamos */
@@ -811,7 +811,7 @@ static void room_decode_shapes(void)
  * Llamado desde los loaders de sala (sub_51D9, sub_53D4, etc.)
  * Ejecuta la secuencia completa de inicialización de sala.
  * ========================================================================== */
-static void room_full_load(void)
+void room_full_load(void)
 {
     /* Paso 1+2: limpiar tablas */
     room_clear_state();

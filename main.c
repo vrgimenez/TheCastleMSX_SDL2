@@ -63,6 +63,11 @@ uint8_t g_score[3]       = {0, 0, 0};
 uint8_t g_hiscore[3]     = {0, 0, 0};
 uint8_t g_map[0x400]     = {0};
 
+uint8_t g_keys[6]        = {0, 0, 0, 0, 0, 0};
+uint8_t g_power_red      = 0;
+uint8_t g_power_green    = 0;
+uint8_t g_door_reset     = 0;
+
 const uint8_t *g_rom      = NULL;
 uint32_t       g_rom_size = 0;
 
@@ -243,8 +248,11 @@ void game_frame(void)
     /* update_doors (sub_442D) */
     update_doors();
 
-    /* update_collectibles (sub_434A) */
-    update_collectibles();
+    /* Cell-based pickup (sub_5B96) — replaces update_collectibles + check_key_pickup */
+    pickup_frame();
+
+    /* Item animation (sub_4499) */
+    pickup_anim_frame();
 
     /* game_loop (sub_40BB: player movement + camera) */
     game_loop();
@@ -254,9 +262,6 @@ void game_frame(void)
 
     /* update_traps (sub_4406) */
     update_traps();
-
-    /* check_key_pickup (sub_438D) */
-    check_key_pickup();
 
     /* check_door_exit (sub_4499) */
     check_door_exit();
@@ -279,6 +284,15 @@ void game_frame(void)
     /* camera + particles update (sub_623C) */
     camera_update();
     update_particles();
+
+    /* Handle restart flag: reload current room (sub_64DD / rl_load_room) */
+    if (g_restart_flag) {
+        room_full_load();
+        draw_hud();
+        g_restart_flag = 0;
+        g_player_col = 6u;
+        g_player_row = 0x11u;
+    }
 }
 
 /* ==========================================================================
@@ -359,6 +373,7 @@ int main(int argc, char *argv[])
     doors_init();
     music_init();
     camera_init();
+    pickup_init();
 
     printf("Iniciando The Castle...\n");
     printf("Controles: Cursores = mover, Space = saltar, Esc = salir\n");
