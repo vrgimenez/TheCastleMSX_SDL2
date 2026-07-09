@@ -109,3 +109,26 @@ MSVC flags: `/W4 /WX- /wd4996`. GCC/Clang: `-Wall -Wextra -Wno-unused-parameter 
 ## Known Issues
 
 - **Room tilesets.** `load_tileset()` in room.c only loads 28 tiles of BG1_MAIN (0x27-0x42) for thirds 1-2. Z80 also loads tiles 0x43-0x9E from ROM via sub_549D. Room-script tile references outside BG1_MAIN show wrong patterns.
+
+- **Room loading pipeline incomplete.** Z80 `sub_54D7` reads room shape descriptors (coordinate pairs) from a table at 0x57DE to draw walls; the port doesn't replicate this. `sub_5503`/`sub_5569` process background/object scripts from ROM for tile loading, enemy placement, etc., and are not implemented.
+
+## Session History
+
+### 2026-07-09 — Fix WALLS/ANIM_BG VRAM indices for thirds 1-2
+
+**Bugfix:** `room_full_load()` called `tiles_load_walls_and_anim(0x0101u)` / `(0x0201u)`, which wrote WALLS+ANIM_BG to **tile indices 1-28** in thirds 1-2 instead of the correct **indices 0x59-0x72** (WALLS) and **0x47-0x50** (ANIM_BG). The old function used a single contiguous `vram_idx` for both ranges, but Z80 places them at non-contiguous indices per third. Third 0 was fine (`tiles_reload_walls_and_anim()` uses separate loops).
+
+**Fix in `room.c:room_full_load()`:** Replaced two buggy calls with four direct `tiles_rom_to_vram()` calls: WALLS (ROM 0x8796) at index 0x59, ANIM_BG (ROM 0x86F6) at index 0x47, for thirds 1-2. Third 0 unchanged.
+
+**Commit:** `7515dfc` — fix: write WALLS/ANIM_BG to correct tile indices in thirds 1-2
+
+**Uncommitted changes (`room.c`):**
+- Fixed WALLS/ANIM_BG VRAM indices: 0x0101→0x0159 (WALLS tercio 1), 0x0147 (ANIM tercio 1), 0x0259/0x0247 (tercio 2)
+
+### 2026-06-11 — Room loading & Z80 pipeline analysis
+
+**Recent commits (4 ahead of origin):**
+- `49ef227` — fix: correct logo animation passes and erase target per Z80 disassembly
+- `a506446` — fix: correct logo animation order and erase modes to match Z80
+- `92eb767` — fix: correct camera_draw_string tile mapping for TILE_MAP layout
+- `a5f4458` — fix: add FILVRM-equivalent clearing to intro_prepare_vram for thirds 1-2

@@ -124,7 +124,7 @@
 /* g_room_x / g_room_y — coordenadas BCD de la sala actual
  * Estos usan las mismas celdas de RAM que g_player_x / g_player_y
  * durante las transiciones (el juego los comparte, sección crítica). */
-uint8_t g_room_x = 0x05u;   /* 0xE320 — columna BCD, inicio = 0x05 */
+uint8_t g_room_x = 0x70u;   /* 0xE320 — BCD row=7, col=0 (inicio) */
 uint8_t g_room_y = 0x01u;   /* 0xE321 — fila BCD + flags             */
 
 /* Posición del jugador tras la transición */
@@ -264,10 +264,13 @@ static void room_full_load(void)
     /* Paso 1+2: limpiar tablas */
     room_clear_state();
 
-    /* Paso 3: tercios 0+1+2 reciben WALLS(28)+ANIM_BG(10) (sub_4E8E) */
+     /* Paso 3: tercios 0+1+2 reciben WALLS(26)+ANIM_BG(10) (sub_4E8E)
+      * Z80: WALLS @ 0x59-0x72, ANIM_BG @ 0x47-0x50 en CADA tercio. */
     tiles_reload_walls_and_anim();                  /* tercio 0 (TILE_MAP) */
-    tiles_load_walls_and_anim(0x0101u);             /* tercio 1 (sub_4E8E) */
-    tiles_load_walls_and_anim(0x0201u);             /* tercio 2 (sub_4E91) */
+    tiles_rom_to_vram(0x8796u, 0x0159u, 26u);      /* tercio 1: WALLS */
+    tiles_rom_to_vram(0x86F6u, 0x0147u, 10u);      /* tercio 1: ANIM_BG */
+    tiles_rom_to_vram(0x8796u, 0x0259u, 26u);      /* tercio 2: WALLS */
+    tiles_rom_to_vram(0x86F6u, 0x0247u, 10u);      /* tercio 2: ANIM_BG */
 
     /* Pasos 4+6: patrones de sala a tercios 1+2 (sub_549D).
      * Z80: 120 tiles desde (slotpage)+0x0430, color 0xF0.
@@ -278,6 +281,47 @@ static void room_full_load(void)
      * En Z80 vienen de sub_549D con fuente = *(uint16*)0xF920+0x0430.
      * Hasta entonces los scripts de sala referencian tiles fuera de
      * BG1_MAIN (paredes en 0x59-0x72 etc.) y se ven basura. */
+
+    /* Pasos 4+6b: variantes de pared 0x73-0x76 a tercio 0.
+     * TILE_MAP las carga como logo (0x8056) al inicio; aquí las
+     * sobrescribimos con los patrones correctos desde ROM.
+     * 0x73-0x74 @ 0x89C6, 0x75-0x76 @ 0x8966 */
+    tiles_rom_to_vram(0x89C6u, 0x0073u, 2u);
+    tiles_rom_to_vram(0x8966u, 0x0075u, 2u);
+    /* También a tercios 1+2 (las necesita sub_4E8E+sub_549D) */
+    tiles_rom_to_vram(0x89C6u, 0x0173u, 2u);
+    tiles_rom_to_vram(0x8966u, 0x0175u, 2u);
+    tiles_rom_to_vram(0x89C6u, 0x0273u, 2u);
+    tiles_rom_to_vram(0x8966u, 0x0275u, 2u);
+
+    /* Pasos 5+7: tiles de enemigos (sub_549D + sub_6CD9 + sub_6D5A).
+     * 14 tiles interleaved @ ROM 0x5916; se espejan para llenar
+     * 28 posiciones por tercio. El mapeo normal/espejado coincide
+     * con el dump VRAM de OpenMSX para sala 0x70. */
+    {
+        /* Mapeo: {src_idx (0-13), mirror, vram_offset} */
+        static const uint8_t enemy_map[28][2] = {
+            { 0,0},{ 1,0},{ 2,0},{ 3,0},   /* 0x87-0x8A: src 0-3 normal */
+            { 1,1},{ 0,1},{ 3,1},{ 2,1},   /* 0x8B-0x8E: src 1,0,3,2 mirror */
+            { 4,0},{ 5,0},{ 6,0},{ 7,0},   /* 0x8F-0x92: src 4-7 normal */
+            { 8,0},{ 9,0},{10,0},{11,0},   /* 0x93-0x96: src 8-11 normal */
+            {12,0},{13,0},                  /* 0x97-0x98: src 12-13 normal */
+            { 5,1},{ 4,1},{ 7,1},{ 6,1},   /* 0x99-0x9C: mirror src 5,4,7,6 */
+            {10,1},{ 9,1},{ 8,1},           /* 0x9D-0x9F: mirror src 10,9,8 */
+            {13,1},{12,1},{11,1},           /* 0xA0-0xA2: mirror src 13,12,11 */
+        };
+        /* Tercio 0: base 0x87, tercio 1: base 0x40, tercio 2: base 0x1F */
+        static const uint16_t tbase[3] = {0x0087u, 0x0140u, 0x021Fu};
+        for (uint8_t t = 0u; t < 3u; t++) {
+            for (uint8_t i = 0u; i < 28u; i++) {
+                uint8_t src_idx  = enemy_map[i][0];
+                bool    mirror   = enemy_map[i][1] != 0u;
+                uint16_t vram    = (uint16_t)(tbase[t] + i);
+                uint32_t rom_off = 0x5916u + (uint32_t)src_idx * 16u;
+                tiles_load_interleaved_tile(rom_off, vram, mirror);
+            }
+        }
+    }
 
     /* Puertas en tercio 0 (legacy: tiles_vram_idx_door()=0x0D).
      * Z80 las carga a tercios 1+2 (0x019F/0x01AF/0x029F), pero
@@ -327,11 +371,11 @@ static bool script_step(void)
         }
 
         case SCRIPT_CAPS_ON:
-            g_script_caps = 1;
+            g_script_caps = 1u;
             return false;
 
         case SCRIPT_CAPS_OFF:
-            g_script_caps = 0;
+            g_script_caps = 0u;
             return false;
 
         case SCRIPT_NOP:
@@ -352,30 +396,27 @@ static bool script_step(void)
             break;
     }
 
-    /* Rango de bytes que representan tiles */
+    /* Traducción byte→tile según sub_55F6 (Z80) */
     uint8_t tile;
 
-    if (b == 0x3Du) {
-        /* ya manejado arriba */
-        tile = 0;
-    } else if (b >= 0x3Au && b <= 0x5Cu) {
-        /* dígitos y símbolos: tile = b - 0x40 + 0x5D */
-        tile = (uint8_t)(b - 0x40u + 0x5Du);
-    } else if (b >= 0xDEu) {
-        /* rango alto: tile = b - 0xA1 + 0x42 */
-        tile = (uint8_t)(b - 0xA1u + 0x42u);
-    } else if (b >= 0xC0u && b <= 0xDDu) {
-        /* rango medio-alto: tile = b - 0xC0 + 0x81 */
-        tile = (uint8_t)(b - 0xC0u + 0x81u);
-    } else if (b >= 0xA6u && b <= 0xBFu) {
-        /* rango medio: tile = b - 0xA6 + 0x27 */
-        tile = (uint8_t)(b - 0xA6u + 0x27u);
-    } else if (b >= 0x5Du) {
-        /* rango estándar: tile = b - 0x40 */
+    if (b < 0x3Au) {
+        /* b < 0x3A (no 0x20/21/28/29): tile = b - 0x13 */
+        tile = (uint8_t)(b - 0x13u);
+    } else if (b < 0x5Du) {
+        /* 0x3A <= b <= 0x5C: tile = b - 0x40 */
         tile = (uint8_t)(b - 0x40u);
+    } else if (g_script_caps == 0u) {
+        /* caps == 0, b >= 0x5D: tile = b - 0x5F */
+        tile = (uint8_t)(b - 0x5Fu);
+    } else if (b >= 0xC0u) {
+        /* caps == 1, b >= 0xC0: tile = b - 0x3F */
+        tile = (uint8_t)(b - 0xC0u + 0x81u);
+    } else if (b >= 0xA6u) {
+        /* caps == 1, 0xA6 <= b < 0xC0: tile = b - 0x7F */
+        tile = (uint8_t)(b - 0xA6u + 0x27u);
     } else {
-        /* byte desconocido: usar como tile directo */
-        tile = b;
+        /* caps == 1, 0x5D <= b < 0xA6: tile = b - 0x5F */
+        tile = (uint8_t)(b - 0x5Fu);
     }
 
     /* Escribir tile en la name table del VDP */
@@ -428,11 +469,11 @@ static const struct {
     uint16_t special_script_b;
 } g_known_scripts = {
     .title_script       = 0x592Du,
-    .game_start_script  = 0x598Du,
-    .intro_bg_script_a  = 0x588Du,
-    .intro_bg_script_b  = 0x58D1u,
-    .special_script_a   = 0x57DEu,
-    .special_script_b   = 0x58D1u,
+    .game_start_script  = 0x58D1u,   /* script sala inicial (0x70=especial) */
+    .intro_bg_script_a  = 0x5887u,   /* sub_53D4: tabla bg ptrs (estándar) */
+    .intro_bg_script_b  = 0x588Au,   /* sub_5431: tabla bg ptrs (especial) */
+    .special_script_a   = 0x588Du,   /* sub_53D4: script sala (estándar)   */
+    .special_script_b   = 0x58D1u,   /* sub_5431: script sala (especial)   */
 };
 
 /* ==========================================================================
@@ -582,13 +623,13 @@ void room_transition(void)
     g_room_special = (g_room_y & 0x08u) != 0u;
 
     if (g_room_special) {
-        /* Sala con flag especial: usar script alternativo */
+        /* Sala con flag especial: sub_5431 (script=0x58D1, bg=0x588A) */
+        g_script_ptr    = g_rom + (g_known_scripts.special_script_b - ROM_ORG);
+        g_script_bg_ptr = g_rom + (g_known_scripts.intro_bg_script_b - ROM_ORG);
+    } else {
+        /* Sala estándar: sub_53D4 (script=0x588D, bg=0x5887) */
         g_script_ptr    = g_rom + (g_known_scripts.special_script_a - ROM_ORG);
         g_script_bg_ptr = g_rom + (g_known_scripts.intro_bg_script_a - ROM_ORG);
-    } else {
-        /* Sala estándar */
-        g_script_ptr    = g_rom + (g_known_scripts.game_start_script - ROM_ORG);
-        g_script_bg_ptr = g_rom + (g_known_scripts.intro_bg_script_b - ROM_ORG);
     }
 
     g_cursor_col  = 0;
@@ -639,14 +680,14 @@ void room_transition(void)
 void room_load_initial(void)
 {
     /* Coordenadas iniciales del castillo */
-    g_room_x = 0x05u;   /* columna BCD 5 */
+    g_room_x = 0x70u;   /* BCD row=7, col=0 */
     g_room_y = 0x01u;   /* fila BCD 1 */
 
     /* Carga completa de sala */
     room_full_load();
 
     /* Posición inicial del jugador (sub_51D9: col=2, row=17) */
-    g_player_col = 2u;
+    g_player_col = 6u;      /* sub_4D52: LD (0xE333),6 */
     g_player_row = 0x11u;   /* 17 */
 
     /* Seleccionar script de la sala inicial */
@@ -705,7 +746,7 @@ void room_load_title(void)
  * ========================================================================== */
 void room_init(void)
 {
-    g_room_x        = 0x05u;
+    g_room_x        = 0x70u;
     g_room_y        = 0x01u;
     g_room_special  = false;
     g_script_ptr    = NULL;

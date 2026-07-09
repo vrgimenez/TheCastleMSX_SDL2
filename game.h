@@ -62,6 +62,8 @@ void    tiles_rom_to_vram(uint32_t rom_file_off, uint16_t vram_idx,
                           uint8_t count);
 void    tiles_vram_from_rom(uint32_t rom_file_off, uint16_t vram_idx,
                             uint8_t count);
+void    tiles_load_interleaved_tile(uint32_t rom_file_off, uint16_t vram_idx,
+                                    bool mirror);
 void    tiles_reload_all(void);
 void    tiles_load_walls_and_anim(uint16_t vram_idx);
 void    tiles_load_patterns(uint32_t rom_off, uint16_t vram_idx,

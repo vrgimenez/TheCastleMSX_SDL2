@@ -260,9 +260,9 @@ void game_init(void)
  *
  * Original Z80 summary:
  *   LD A,0x05 → (0xE324)   ; lives remaining = 5
- *   LD A,0x70 → (0xE320)   ; player X pixel position = 0x70 (112)
- *   LD A,0x06 → (0xE333)   ; room number = 6 (starting room)
- *   LD A,0x01 → (0xE321)   ; player Y = 1 (top of map)
+ *   LD A,0x70 → (0xE320)   ; g_room_x BCD row=7, col=0
+ *   LD A,0x06 → (0xE333)   ; g_player_col = 6
+ *   LD A,0x01 → (0xE321)   ; g_room_y = 0x01
  *   LD A,0x70 → (0xEACA)   ; speed counter = 0x70
  *   LD A,0x00 → (0xE322)   ; sub-pixel X = 0
  *   LD A,0x11 → (0xE323)   ; direction timer = 0x11
@@ -287,9 +287,12 @@ void game_init(void)
 void game_reset_level(void)
 {
     g_lives        = 5;
-    g_player_x     = 0x70;    /* 112 pixels */
+    g_room_x       = 0x70;    /* BCD row=7, col=0 */
+    g_player_x     = 0x70;    /* pixel X = 112 (misma celda Z80 0xE320) */
+    g_room_y       = 0x01;
+    g_player_y     = 0x01;
+    g_player_col   = 6;       /* columna en sala */
     g_room_number  = 6;
-    g_player_y     = 1;
     g_player_speed = 0x70;
     g_subpixel_x   = 0;
     g_dir_timer    = 0x11;

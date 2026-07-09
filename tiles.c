@@ -182,6 +182,37 @@ void tiles_rom_to_vram(uint32_t rom_file_off, uint16_t vram_idx,
     }
 }
 
+/* sub_6D5A: mirror pattern byte horizontally (reverse bits) */
+static uint8_t mirror_byte(uint8_t b)
+{
+    uint8_t r = 0u;
+    for (uint8_t i = 0u; i < 8u; i++) {
+        r = (uint8_t)((r << 1u) | (b & 1u));
+        b >>= 1u;
+    }
+    return r;
+}
+
+/* Carga un tile interleaved desde ROM a VRAM, con espejado opcional.
+ * mirror=true → reversa bits de la fila de patrón (sub_6D5A).
+ * El color se copia sin cambios. */
+void tiles_load_interleaved_tile(uint32_t rom_file_off, uint16_t vram_idx,
+                                 bool mirror)
+{
+    if (rom_file_off >= 0x4000u) rom_file_off -= 0x4000u;
+    if (rom_file_off + 16u > g_rom_size) return;
+    uint32_t off = rom_file_off;
+    uint16_t pat = (uint16_t)(VRAM_PAT_BASE + vram_idx * 8u);
+    uint16_t col = (uint16_t)(VRAM_COL_BASE + vram_idx * 8u);
+    for (uint8_t row = 0u; row < 8u; row++) {
+        uint8_t p = g_rom[off + (uint32_t)row * 2u];
+        uint8_t c = g_rom[off + (uint32_t)row * 2u + 1u];
+        if (mirror) p = mirror_byte(p);
+        hal_vdp_write_vram((uint16_t)(pat + row), p);
+        hal_vdp_write_vram((uint16_t)(col + row), c);
+    }
+}
+
 void tiles_vram_from_rom(uint32_t rom_file_off, uint16_t vram_idx,
                           uint8_t count)
 {
