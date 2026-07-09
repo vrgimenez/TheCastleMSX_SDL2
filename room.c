@@ -254,6 +254,558 @@ static void load_tileset(uint16_t ts_desc_addr, uint16_t vram_idx,
 }
 
 /* ==========================================================================
+ * ROOM SHAPE DECODER — port of Z80 sub_64DD / rl_load_room
+ *
+ * Decodes the geometric shape stream from ROM to build the name table
+ * (VRAM tiles) and collision map (g_tilemap) for a room.
+ *
+ * Tile allocation per code (0..95) per third (0..2) is tracked in
+ * g_tile_alloc[3][96]; counters in g_anim_ctr[3].
+ * ========================================================================== */
+
+/* Tile allocation table: tracks which VRAM tile index is assigned to each
+ * (third, code) pair. 0 = unassigned (blank tile at VRAM index 0). */
+static uint8_t g_tile_alloc[3][96];
+
+/* Door slot index per cell (stored at colmap row 20+, matching Z80 0xE6EE) */
+#define DOOR_SLOT_BASE_ROW  20u
+
+/* Name-table VRAM address for play-area cell (h=col 0..29, l=row 0..19) */
+static inline uint16_t nt_addr(uint8_t col, uint8_t row)
+{
+    return (uint16_t)(VRAM_NAME_BASE + (uint16_t)(row + 4u) * 32u + col);
+}
+
+/* ===== sub_6CB5 — Find or allocate tile slot for (code, third) ===== */
+static uint8_t tile_alloc(uint8_t code, uint8_t third)
+{
+    uint8_t tile = g_tile_alloc[third][code];
+    if (tile != 0u || code == 0u) return tile;
+    tile = g_anim_ctr[third];
+    if (tile >= 0x9Eu) return 0u;   /* out of VRAM tile space */
+    g_anim_ctr[third] = (uint8_t)(tile + 1u);
+    g_tile_alloc[third][code] = tile;
+    return tile;
+}
+
+/* ===== sub_6B0B — Load tile graphics for a code in given third ===== */
+static void tile_load_code(uint8_t code, uint8_t third)
+{
+    if (code == 0u) return;
+    uint8_t tile = g_tile_alloc[third][code];
+    if (tile != 0u) return;  /* already loaded */
+    tile = tile_alloc(code, third);
+    if (tile == 0u) return;
+
+    /* Read descriptor: 3 bytes at 0x7BDA + code*3 */
+    uint8_t pat_lo = rom_rb((uint16_t)(0x7BDAu + code * 3u));
+    uint8_t pat_hi = rom_rb((uint16_t)(0x7BDAu + code * 3u + 1u));
+    uint8_t color  = rom_rb((uint16_t)(0x7BDAu + code * 3u + 2u));
+
+    uint8_t page = (pat_hi >> 5) & 7u;
+    uint16_t pat = (uint16_t)(((uint16_t)(pat_hi & 0x1Fu) << 8) | pat_lo);
+    uint16_t vram = (uint16_t)((uint16_t)third << 8) | tile;
+
+    if (page < 4u) {
+        static const uint32_t rom_pages[4] = {0x8796u, 0x86F6u, 0x8056u, 0x9A76u};
+        if (page < 4u) {
+            uint32_t rom_off = rom_pages[page] + (uint32_t)pat * 16u;
+            tiles_load_interleaved_tile(rom_off, vram, false);
+        }
+    } else {
+        /* Room-specific slot page: single-pattern expansion */
+        uint16_t src_z80 = (uint16_t)(((uint16_t)(pat_hi & 0x03u) << 8) | pat_lo);
+        src_z80 = (uint16_t)(src_z80 | 0x4000u);
+        uint8_t pattern = rom_rb(src_z80);
+        uint8_t pat_base = (uint16_t)third * 0x800u + (uint16_t)tile * 8u;
+        uint8_t col_base = (uint16_t)third * 0x800u + (uint16_t)tile * 8u;
+        for (uint8_t r = 0; r < 8u; r++) {
+            hal_vdp_write_vram((uint16_t)(VRAM_PATTERN_BASE + pat_base + r), pattern);
+            hal_vdp_write_vram((uint16_t)(VRAM_COLOR_BASE + col_base + r), color);
+        }
+    }
+}
+
+/* ===== sub_5E80 — Write colmap entry at (h,l) for code c ===== */
+static void colmap_write(uint8_t col, uint8_t row, uint8_t code, uint8_t delta, uint8_t e)
+{
+    if (col >= 30u || row >= 20u) return;
+    uint8_t cd = rom_rb((uint16_t)(0x7780u + (uint16_t)code * 2u));
+    uint8_t ce = rom_rb((uint16_t)(0x7780u + (uint16_t)code * 2u + 1u));
+    g_tilemap[(uint16_t)row * 30u + col] = (uint8_t)((delta & 0xC0u) | cd | (ce << 2));
+    if (code == 0x0Du || code == 0x0Eu || code == 0x0Fu)
+        g_tilemap[(DOOR_SLOT_BASE_ROW + (uint16_t)row) * 30u + col] = e;
+}
+
+/* ===== sub_6A7C — Cell writer: colmap + name table ===== */
+static void cell_write(uint8_t col, uint8_t row, uint8_t code, uint8_t delta, uint8_t e)
+{
+    if (row >= 20u || col >= 30u) return;
+    uint8_t third = (row < 4u) ? 0u : (row < 0x0Cu) ? 1u : 2u;
+    uint8_t adj = (code == 0x0Du) ? 0x0Cu : code;
+    if (g_tile_alloc[third][adj] == 0u) tile_load_code(adj, third);
+    colmap_write(col, row, code, delta, e);
+    hal_vdp_write_vram(nt_addr(col, row), (uint8_t)(g_tile_alloc[third][adj] + delta));
+}
+
+/* ===== sub_68B7 — Write 2-code pair from ROM table ===== */
+static void pair_write(uint8_t col, uint8_t row, uint16_t rom_tbl, uint8_t e)
+{
+    cell_write(col, row, rom_rb(rom_tbl), rom_rb((uint16_t)(rom_tbl + 1u)), e);
+    cell_write((uint8_t)(col + 1u), row, rom_rb((uint16_t)(rom_tbl + 2u)),
+               rom_rb((uint16_t)(rom_tbl + 3u)), e);
+}
+/* sub_6888: pair from 0x6DEA + c*4 */
+static void pair_simple(uint8_t col, uint8_t row, uint8_t c, uint8_t e)
+{
+    pair_write(col, row, (uint16_t)(0x6DEAu + (uint16_t)c * 4u), e);
+}
+/* sub_689A: pair from 0x6E1E + c*12 + phase*4 */
+static void pair_phase(uint8_t col, uint8_t row, uint8_t c, uint8_t phase, uint8_t e)
+{
+    pair_write(col, row, (uint16_t)(0x6E1Eu + (uint16_t)c * 12u + (uint16_t)phase * 4u), e);
+}
+/* sub_686C: determine segment phase 0=start, 1=middle, 2=end */
+static uint8_t seg_phase(uint16_t count, uint16_t orig_count)
+{
+    if (count == orig_count) return 0u;
+    if (count == 1u) return 2u;
+    return 1u;
+}
+
+/* ===== Cursor state for shape decoder ===== */
+static uint8_t  sd_col, sd_row;      /* (H, L) cursor */
+static uint16_t sd_count;            /* (DE) remaining repetitions */
+static uint16_t sd_stream;           /* (0xEAD9) stream pointer (Z80 ROM addr) */
+static uint8_t  sd_wall_var;         /* (0xEADF) last wall variant */
+
+/* Forward declarations for mutually recursive shape functions */
+static void adv_col(void);
+static void adv_row(void);
+static void s_66B0(uint8_t a);
+static void s_6774(uint8_t a);
+static void door_case(uint8_t *h, uint8_t *l, uint16_t de);
+static void elevator_case(uint8_t *h, uint8_t *l, uint16_t de);
+
+/* ===== sub_6A3A / sub_6A63 — Cursor advancement ===== */
+static void adv_row(void)
+{
+    if (sd_col == 0x00u || sd_col == 0x1Cu) { adv_col(); return; }
+    sd_col = (uint8_t)(sd_col + 2u);
+    if (sd_col == 0x1Cu) { sd_col = 2u; sd_row++; }
+}
+static void adv_col(void)
+{
+    sd_row++;
+    if (sd_row == 0x14u) { sd_row = 0u; sd_col = (uint8_t)(sd_col + 2u); }
+}
+
+/* ===== sub_6998 — Extended count (0xFF chain) ===== */
+static uint16_t ext_count(uint16_t de)
+{
+    for (;;) {
+        uint8_t b = rom_rb(++sd_stream);
+        de = (uint16_t)(de + b);
+        if (b != 0xFFu) return de;
+    }
+}
+
+/* ===== sub_6616 — Read shape byte (3-bit count, 5-bit shape) ===== */
+static uint8_t read_shape_6616(void)
+{
+    uint8_t cbyte = rom_rb(sd_stream);
+    uint16_t de = (uint16_t)((cbyte & 7u) + 1u);
+    if (de == 8u) de = ext_count(de);
+    sd_count = de;
+    sd_stream++;
+    return (uint8_t)(cbyte >> 3);
+}
+
+/* ===== sub_6973 — Read shape byte (4-bit count, 4-bit shape) ===== */
+static uint8_t read_shape_6973(void)
+{
+    uint8_t cbyte = rom_rb(sd_stream);
+    uint16_t de = (uint16_t)((cbyte & 0x0Fu) + 1u);
+    if (de == 0x10u) de = ext_count(de);
+    sd_count = de;
+    sd_stream++;
+    return (uint8_t)(cbyte >> 4);
+}
+
+/* ===== sub_6055 — Elevator/ramp structural object registration ===== */
+static void struct_register(uint8_t a, uint8_t col, uint8_t row, uint16_t de)
+{
+    uint8_t slot = g_object_table[0x14Fu];   /* 0xE495 = slot counter */
+    g_object_table[0x14Fu] = (uint8_t)(slot + 1u);
+    uint16_t ix = (uint16_t)(0xE43Eu - 0xE346u + slot * 5u);
+    uint8_t t;
+    g_object_table[ix] = a;
+    g_object_table[ix + 1u] = col;
+    g_object_table[ix + 2u] = row;
+    g_object_table[ix + 3u] = (uint8_t)de;
+    if (a == 0x0Cu)      t = 3u;
+    else if (a == 0x0Du) t = 1u;
+    else if (a < 0x1Cu)  t = 0u;
+    else if (a < 0x1Fu)  t = 4u;
+    else                 t = 1u;
+    g_object_table[ix + 4u] = t;
+}
+
+/* ===== sub_66B0 — Row-major shape dispatcher ===== */
+static void s_66B0(uint8_t a)
+{
+    uint8_t h = sd_col, l = sd_row;
+    uint16_t de = sd_count;
+    if (a >= 0x0Cu && a != 0x0Eu) struct_register(a, h, l, de);
+    if (a == 0u) {
+        while (de) { adv_row(); de--; }
+    } else if (a < 4u) {
+        sd_wall_var = a;
+        while (de) {
+            uint8_t d0 = (uint8_t)(l & 1u);
+            cell_write(h, l, a, d0, (uint8_t)de);
+            cell_write((uint8_t)(h + 1u), l, a, (uint8_t)(d0 ^ 1u), (uint8_t)de);
+            adv_row(); de--;
+        }
+    } else if (a < 7u) {
+        uint8_t c = (uint8_t)(a - 3u);
+        while (de) { pair_simple(h, l, c, (uint8_t)de); adv_row(); de--; }
+    } else if (a < 9u) {
+        uint8_t c = (uint8_t)(a - 7u);
+        while (de) { pair_phase(h, l, c, seg_phase(de, sd_count), (uint8_t)de); adv_row(); de--; }
+    } else if (a == 9u) {
+        while (de) { pair_simple(h, l, 4u, (uint8_t)de); adv_row(); de--; }
+    } else if (a < 0x0Cu) {
+        while (de) {
+            cell_write(h, l, a, 0u, (uint8_t)de);
+            cell_write((uint8_t)(h + 1u), l, a, 0u, (uint8_t)de);
+            cell_write(h, (uint8_t)(l + 1u), a, 1u, (uint8_t)de);
+            cell_write((uint8_t)(h + 1u), (uint8_t)(l + 1u), a, 1u, (uint8_t)de);
+            adv_row(); de--;
+        }
+    } else {
+        uint8_t c = (uint8_t)(a - 0x0Au);
+        while (de) { pair_phase(h, l, c, seg_phase(de, sd_count), (uint8_t)de); adv_row(); de--; }
+    }
+    sd_col = h; sd_row = l; sd_count = de;
+}
+
+/* ===== sub_68CF — Wall variant lookup for doors ===== */
+static void door_wall_var(uint8_t h, uint8_t l)
+{
+    uint8_t a = 0u;
+    if (l > 0u) {
+        uint8_t tbl = (l < 4u) ? 0u : (l < 0x0Cu) ? 1u : 2u;
+        uint8_t tile = hal_vdp_read_vram(nt_addr(h, (uint8_t)(l - 1u)));
+        int b;
+        for (b = 3; b >= 1; b--) {
+            uint8_t at = g_tile_alloc[tbl][(uint8_t)(4 - b)];
+            if (at != 0u && (at == tile || (uint8_t)(at + 1u) == tile)) break;
+        }
+        if (b >= 1) a = (uint8_t)(4 - b);
+    }
+    if (a < 4u) { sd_wall_var = a; return; }
+    a = (uint8_t)(sd_wall_var & 3u);
+    sd_wall_var = a ? a : 3u;
+}
+
+/* ===== Door sub-shapes (case 6 of s_6774) ===== */
+static void door_frame(uint8_t h, uint8_t l, uint8_t e, uint8_t bit)
+{
+    uint8_t c = (uint8_t)(sd_wall_var + 0x3Fu);
+    cell_write(h, l, c, 0u, e);
+    cell_write((uint8_t)(h + 1u), l, c, 1u, e);
+    if (bit == 0u) return;
+    c = (uint8_t)(e + (uint8_t)((uint8_t)(sd_wall_var - 1u) * 6u) + 0x41u);
+    cell_write(h, l, c, 0u, e);
+    cell_write((uint8_t)(h + 1u), l, c, 1u, e);
+}
+static void door_panel(uint8_t h, uint8_t l, uint8_t e, uint8_t bit)
+{
+    if (bit == 0u) return;
+    uint8_t c = (uint8_t)(e + 0x53u);
+    uint8_t eslot = (uint8_t)(g_object_table[0x14Bu] - 1u); /* 0xE491 */
+    cell_write(h, l, c, 0u, eslot);
+    cell_write((uint8_t)(h + 1u), l, c, 1u, eslot);
+}
+static void door_passage(uint8_t h, uint8_t l, uint8_t e)
+{
+    cell_write(h, l, 0x16u, 0u, e);
+    cell_write((uint8_t)(h + 1u), l, 0x16u, 1u, e);
+}
+
+/* ===== sub_5FDF — Door registration ===== */
+static uint8_t door_register(uint8_t h, uint8_t l, uint8_t e_count)
+{
+    uint8_t slot = g_object_table[0x14Bu]; /* 0xE491 */
+    g_object_table[0x14Bu] = (uint8_t)(slot + 1u);
+    uint16_t ix = (uint16_t)(0xE346u - 0xE346u + slot * 4u);
+    uint8_t cat;
+    if (h == 0x00u)      { g_object_table[0x148u]++; cat = 0u; } /* 0xE48E */
+    else if (h == 0x1Cu) { g_object_table[0x149u]++; cat = 2u; } /* 0xE48F */
+    else                 { g_object_table[0x14Au]++; cat = 1u; } /* 0xE490 */
+    /* Persistence bitfield: g_map at 0xE00D + room_row*0x15 + room_col*2 + cat */
+    {
+        uint8_t rm = g_room_x;
+        uint16_t bf = (uint16_t)((rm >> 4) * 0x15u + (rm & 0x0Fu) * 2u + cat);
+        uint16_t bf_base = (uint16_t)(bf / 8u);
+        uint8_t bit = (uint8_t)((g_map[bf_base] >> (7u - (bf & 7u))) & 1u);
+        g_object_table[ix]     = bit;
+        g_object_table[ix + 1u] = (uint8_t)((sd_wall_var << 4) | (uint8_t)(e_count - 1u));
+        g_object_table[ix + 2u] = h;
+        g_object_table[ix + 3u] = l;
+        return bit;
+    }
+}
+
+/* ===== sub_6774 — Column-major shape dispatcher ===== */
+static void s_6774(uint8_t a)
+{
+    uint8_t h = sd_col, l = sd_row;
+    uint16_t de = sd_count;
+    if (a >= 0x0Cu && a != 0x0Eu) struct_register((uint8_t)(a + 0x10u), h, l, de);
+    if (a == 0u) {
+        while (de) { adv_col(); de--; }
+    } else if (a < 5u) {
+        uint8_t c = (uint8_t)(a + 4u);
+        while (de) { pair_simple(h, l, c, (uint8_t)de); adv_col(); de--; }
+    } else if (a == 5u) {
+        while (de) { pair_phase(h, l, 6u, seg_phase(de, sd_count), (uint8_t)de); adv_col(); de--; }
+    } else if (a == 6u) {
+        door_case(&h, &l, de);
+    } else if (a < 0x0Bu) {
+        uint8_t c = (uint8_t)(a + 2u);
+        while (de) { pair_simple(h, l, c, (uint8_t)de); adv_col(); de--; }
+    } else if (a == 0x0Bu) {
+        elevator_case(&h, &l, de);
+    } else if (a < 0x0Fu) {
+        uint8_t c = (uint8_t)(a - 4u);
+        while (de) { pair_phase(h, l, c, seg_phase(de, sd_count), (uint8_t)de); adv_col(); de--; }
+    } else {
+        uint8_t c = (uint8_t)(a - 3u);
+        while (de) { pair_simple(h, l, c, (uint8_t)de); adv_col(); de--; }
+    }
+    sd_col = h; sd_row = l; sd_count = de;
+}
+
+/* ===== sub_6664 — Dispatch border shape ===== */
+static void s_6664(uint8_t shape)
+{
+    if (shape != 0u && shape < 0x10u) { s_6774(shape); return; }
+    s_66B0((uint8_t)(shape & 0x0Fu));
+}
+
+/* ===== sub_67C5 — Door case handler (modifies cursor via pointers) ===== */
+static void door_case(uint8_t *h, uint8_t *l, uint16_t de)
+{
+    uint8_t e = (uint8_t)de;
+    if (e != 1u) {
+        uint8_t bit;
+        door_wall_var(*h, *l);
+        bit = door_register(*h, *l, e);
+        door_frame(*h, *l, e, bit);
+        sd_col = *h; sd_row = *l; adv_col(); *h = sd_col; *l = sd_row;
+        door_panel(*h, *l, e, bit);
+        sd_col = *h; sd_row = *l; adv_col(); *h = sd_col; *l = sd_row;
+        door_panel(*h, *l, e, bit);
+        sd_col = *h; sd_row = *l; adv_col(); *h = sd_col; *l = sd_row;
+        if (*h != 0x00u && *h != 0x1Cu) return;
+    }
+    sd_col = *h; sd_row = *l;
+    door_passage(*h, *l, e);
+    sd_col = *h; sd_row = *l; adv_col(); *h = sd_col; *l = sd_row;
+}
+
+/* ===== sub_6814 — Elevator case handler ===== */
+static void elevator_case(uint8_t *h, uint8_t *l, uint16_t de)
+{
+    uint8_t lbot = (uint8_t)(*l + (uint8_t)((uint8_t)de - 1u));
+    uint8_t tile = hal_vdp_read_vram(nt_addr(*h, lbot));
+    uint8_t c;
+    if (tile == 0u) struct_register(0x1Bu, *h, lbot, de);
+    c = tile ? 0x0Bu : 0x07u;
+    while (de) {
+        sd_col = *h; sd_row = *l;
+        pair_phase(*h, *l, c, seg_phase(de, sd_count), (uint8_t)de);
+        sd_col = *h; sd_row = *l; adv_col(); *h = sd_col; *l = sd_row;
+        de--;
+    }
+    if (tile == 0u)
+        pair_simple(*h, (uint8_t)(*l + 3u), 0x0Bu, 0u);
+}
+
+/* ===== sub_6616_loop — Border band stream loop ===== */
+static void s_6616_loop(void)
+{
+    for (;;) {
+        uint8_t shape = read_shape_6616();
+        if (shape == 7u && sd_col == 0x1Cu)      shape = 8u;
+        else if (shape == 8u && sd_col == 0x00u) shape = 7u;
+        s_6664(shape);
+        if (sd_col == 0x02u || sd_col == 0x1Eu) return;
+    }
+}
+
+/* ===== sub_6671 — Body + objects stream ===== */
+static void s_6671(uint16_t ptr)
+{
+    sd_col = 2u; sd_row = 0u; sd_count = 0u;
+    sd_stream = ptr;
+    /* Pass 1: row-major shapes (sub_66A2) */
+    while (sd_row != 0x14u) s_66B0(read_shape_6973());
+    /* Pass 2: column-major shapes (sub_6766) */
+    sd_col = 2u; sd_row = 0u; sd_count = 0u;
+    sd_stream = ptr;
+    while (sd_col != 0x1Cu) s_6774(read_shape_6973());
+    /* Pass 3: object placement (sub_69AA) */
+    sd_stream = ptr;
+    for (;;) {
+        uint8_t b0 = rom_rb(sd_stream);
+        if (b0 == 0u) return;
+        sd_col = (uint8_t)((b0 & 0x0Fu) << 1);
+        sd_stream++;
+        uint8_t b1 = rom_rb(sd_stream);
+        sd_row = (uint8_t)(b1 & 0x1Fu);
+        uint8_t cflags = (uint8_t)((b0 >> 4) | (b1 & 0xE0u));
+        sd_stream++;
+        uint8_t code = (uint8_t)((cflags & 0x0Fu) + ((cflags & 0x40u) ? 0x20u : 0x30u));
+        uint8_t slot;
+        /* Persistence bit lookup */
+        uint8_t bit;
+        if (code < 0x30u) {
+            slot = g_object_table[0x14Du]; /* 0xE493 */
+            g_object_table[0x14Du] = (uint8_t)(slot + 1u);
+            uint16_t ix = (uint16_t)(0xE3D6u - 0xE346u + slot * 4u);
+            uint8_t room_idx = (uint8_t)(((g_room_x >> 4) & 0x0Fu) * 10u + (g_room_x & 0x0Fu));
+            uint16_t bf_base = (uint16_t)(0xE1A7u - 0xE000u + (uint16_t)room_idx * 2u);
+            bit = (uint8_t)((g_map[bf_base] >> (7u - (slot & 7u))) & 1u);
+            g_object_table[ix] = bit;
+            g_object_table[ix + 1u] = code;
+            g_object_table[ix + 2u] = sd_col;
+            g_object_table[ix + 3u] = sd_row;
+        } else if (code < 0x36u) {
+            slot = g_object_table[0x14Cu]; /* 0xE492 */
+            g_object_table[0x14Cu] = (uint8_t)(slot + 1u);
+            uint16_t ix = (uint16_t)(0xE386u - 0xE346u + slot * 5u);
+            uint8_t room_idx = (uint8_t)(((g_room_x >> 4) & 0x0Fu) * 10u + (g_room_x & 0x0Fu));
+            uint16_t bf_base = (uint16_t)(0xE0DFu - 0xE000u + (uint16_t)room_idx * 2u);
+            bit = (uint8_t)((g_map[bf_base] >> (7u - (slot & 7u))) & 1u);
+            g_object_table[ix] = bit;
+            g_object_table[ix + 1u] = code;
+            g_object_table[ix + 2u] = sd_col;
+            g_object_table[ix + 3u] = sd_row;
+            g_object_table[ix + 4u] = 0u;
+        } else {
+            slot = g_object_table[0x14Eu]; /* 0xE494 */
+            g_object_table[0x14Eu] = (uint8_t)(slot + 1u);
+            uint16_t ix = (uint16_t)(0xE416u - 0xE346u + slot * 5u);
+            uint8_t room_idx = (uint8_t)(((g_room_x >> 4) & 0x0Fu) * 10u + (g_room_x & 0x0Fu));
+            uint16_t bf_base = (uint16_t)(0xE26Fu - 0xE000u + room_idx);
+            bit = (uint8_t)((g_map[bf_base] >> (7u - (slot & 7u))) & 1u);
+            g_object_table[ix] = bit;
+            g_object_table[ix + 1u] = code;
+            g_object_table[ix + 2u] = sd_col;
+            g_object_table[ix + 3u] = sd_row;
+            g_object_table[ix + 4u] = (uint8_t)((cflags & 0x20u) ? 3u : 1u);
+        }
+        if (bit == 0u) continue;
+        if (code == 0x36u) {
+            cell_write(sd_col, (uint8_t)(sd_row + 1u), code, 0u, slot);
+            cell_write((uint8_t)(sd_col + 1u), (uint8_t)(sd_row + 1u), code, 1u, slot);
+            continue;
+        }
+        if (code == 0x23u) {
+            cell_write(sd_col, sd_row, code, 0u, slot);
+            cell_write((uint8_t)(sd_col + 1u), sd_row, code, 0u, slot);
+            cell_write((uint8_t)(sd_col + 1u), (uint8_t)(sd_row + 1u), code, 0u, slot);
+            cell_write(sd_col, (uint8_t)(sd_row + 1u), code, 0u, slot);
+            continue;
+        }
+        /* code < 0x23 or 0x24-0x29: 4-tile block with optional delta 4 */
+        {
+            uint8_t d = (uint8_t)((cflags & 0x20u) ? 4u : 0u);
+            cell_write(sd_col, sd_row, code, d, slot);
+            cell_write((uint8_t)(sd_col + 1u), sd_row, code, (uint8_t)(d + 1u), slot);
+            cell_write(sd_col, (uint8_t)(sd_row + 1u), code, (uint8_t)(d + 2u), slot);
+            cell_write((uint8_t)(sd_col + 1u), (uint8_t)(sd_row + 1u), code, (uint8_t)(d + 3u), slot);
+        }
+    }
+}
+
+/* ===== sub_65E1 — Stream pointer from room table ===== */
+static uint16_t stream_ptr(uint16_t off)
+{
+    uint16_t p = (uint16_t)(0x7CF2u + off);
+    uint16_t v = rom_rw(p);
+    return v;
+}
+
+/* ===== room_decode_shapes — Main entry: decode room from shape streams =====
+ *
+ * Equivalent to Z80 sub_64DD / DF0 rl_load_room.
+ * Fills name table rows 4-23 and colmap g_tilemap[0..19][0..29].
+ * WALLS/ANIM_BG must already be loaded to all 3 thirds.
+ * ========================================================================== */
+static void room_decode_shapes(void)
+{
+    uint8_t room = g_room_x;
+
+    /* Clear sprite + object tables */
+    memset(g_tile_alloc, 0, sizeof(g_tile_alloc));
+    memset(g_sprite_table, 0, sizeof(g_sprite_table));
+    memset(g_object_table, 0, sizeof(g_object_table));
+    g_anim_ctr[0] = 0x72u; g_anim_ctr[1] = 0x1Au; g_anim_ctr[2] = 0x00u;
+
+    /* Fill blank tile (tile 0) in all 3 thirds with zeros */
+    for (int t = 0; t < 3; t++) {
+        uint16_t base = (uint16_t)((uint16_t)t * 0x800u);
+        for (uint8_t r = 0; r < 8u; r++) {
+            hal_vdp_write_vram((uint16_t)(VRAM_PATTERN_BASE + base + r), 0x00u);
+            hal_vdp_write_vram((uint16_t)(VRAM_COLOR_BASE + base + r), 0x00u);
+        }
+    }
+
+    /* Clear name table rows 4-23 + colmap */
+    hal_vdp_fill_vram((uint16_t)(VRAM_NAME_BASE + 0x80u), 0x00u, 0x0280u);
+    memset(g_tilemap, 0, sizeof(g_tilemap));
+
+    /* Stream offset = 42 * row + 4 * col (BCD room coordinates) */
+    uint16_t off = (uint16_t)(42u * (room >> 4) + 4u * (room & 0x0Fu));
+
+    /* Top border band: starts at col=0, row=0 */
+    sd_col = 0x00u; sd_row = 0x00u; sd_count = 0u;
+    sd_stream = stream_ptr(off);
+    s_6616_loop();
+
+    /* Bottom border band: starts at col=0x1C, row=0 */
+    sd_col = 0x1Cu; sd_row = 0x00u; sd_count = 0u;
+    sd_stream = stream_ptr((uint16_t)(off + 4u));
+    s_6616_loop();
+
+    /* Body + objects */
+    s_6671(stream_ptr((uint16_t)(off + 2u)));
+
+    /* Load tile patterns for all allocated tiles */
+    for (int t = 0; t < 3; t++) {
+        for (int c = 0; c < 96; c++) {
+            if (g_tile_alloc[t][c] != 0u) {
+                uint8_t code = (uint8_t)c;
+                uint8_t pat_lo = rom_rb((uint16_t)(0x7BDAu + code * 3u));
+                uint8_t pat_hi = rom_rb((uint16_t)(0x7BDAu + code * 3u + 1u));
+                uint8_t page = (pat_hi >> 5) & 7u;
+                uint16_t pat = (uint16_t)(((uint16_t)(pat_hi & 0x1Fu) << 8) | pat_lo);
+                uint16_t vram = (uint16_t)((uint16_t)t << 8) | g_tile_alloc[t][code];
+                if (page < 4u) {
+                    static const uint32_t rom_pages[4] = {0x8796u, 0x86F6u, 0x8056u, 0x9A76u};
+                    uint32_t rom_off = rom_pages[page] + (uint32_t)pat * 16u;
+                    tiles_load_interleaved_tile(rom_off, vram, false);
+                }
+            }
+        }
+    }
+}
+
+/* ==========================================================================
  * sub_5382 — Carga completa de una sala
  *
  * Llamado desde los loaders de sala (sub_51D9, sub_53D4, etc.)
@@ -264,75 +816,16 @@ static void room_full_load(void)
     /* Paso 1+2: limpiar tablas */
     room_clear_state();
 
-     /* Paso 3: tercios 0+1+2 reciben WALLS(26)+ANIM_BG(10) (sub_4E8E)
-      * Z80: WALLS @ 0x59-0x72, ANIM_BG @ 0x47-0x50 en CADA tercio. */
+    /* Paso 3: tercios 0+1+2 reciben WALLS(26)+ANIM_BG(10) (sub_4E8E)
+     * Z80: WALLS @ 0x59-0x72, ANIM_BG @ 0x47-0x50 en CADA tercio. */
     tiles_reload_walls_and_anim();                  /* tercio 0 (TILE_MAP) */
     tiles_rom_to_vram(0x8796u, 0x0159u, 26u);      /* tercio 1: WALLS */
     tiles_rom_to_vram(0x86F6u, 0x0147u, 10u);      /* tercio 1: ANIM_BG */
     tiles_rom_to_vram(0x8796u, 0x0259u, 26u);      /* tercio 2: WALLS */
     tiles_rom_to_vram(0x86F6u, 0x0247u, 10u);      /* tercio 2: ANIM_BG */
 
-    /* Pasos 4+6: patrones de sala a tercios 1+2 (sub_549D).
-     * Z80: 120 tiles desde (slotpage)+0x0430, color 0xF0.
-     * Tercio 0 no toca — queda con TILE_MAP. */
-    load_tileset(ROM_TS_BG1_MAIN, 0x0127u, 28u);   /* tercio 1: 0x27-0x42 */
-    load_tileset(ROM_TS_BG1_MAIN, 0x0227u, 28u);   /* tercio 2: 0x27-0x42 */
-    /* FIXME: tiles 0x43-0x9E no se cargan — falta (0xF920)
-     * En Z80 vienen de sub_549D con fuente = *(uint16*)0xF920+0x0430.
-     * Hasta entonces los scripts de sala referencian tiles fuera de
-     * BG1_MAIN (paredes en 0x59-0x72 etc.) y se ven basura. */
-
-    /* Pasos 4+6b: variantes de pared 0x73-0x76 a tercio 0.
-     * TILE_MAP las carga como logo (0x8056) al inicio; aquí las
-     * sobrescribimos con los patrones correctos desde ROM.
-     * 0x73-0x74 @ 0x89C6, 0x75-0x76 @ 0x8966 */
-    tiles_rom_to_vram(0x89C6u, 0x0073u, 2u);
-    tiles_rom_to_vram(0x8966u, 0x0075u, 2u);
-    /* También a tercios 1+2 (las necesita sub_4E8E+sub_549D) */
-    tiles_rom_to_vram(0x89C6u, 0x0173u, 2u);
-    tiles_rom_to_vram(0x8966u, 0x0175u, 2u);
-    tiles_rom_to_vram(0x89C6u, 0x0273u, 2u);
-    tiles_rom_to_vram(0x8966u, 0x0275u, 2u);
-
-    /* Pasos 5+7: tiles de enemigos (sub_549D + sub_6CD9 + sub_6D5A).
-     * 14 tiles interleaved @ ROM 0x5916; se espejan para llenar
-     * 28 posiciones por tercio. El mapeo normal/espejado coincide
-     * con el dump VRAM de OpenMSX para sala 0x70. */
-    {
-        /* Mapeo: {src_idx (0-13), mirror, vram_offset} */
-        static const uint8_t enemy_map[28][2] = {
-            { 0,0},{ 1,0},{ 2,0},{ 3,0},   /* 0x87-0x8A: src 0-3 normal */
-            { 1,1},{ 0,1},{ 3,1},{ 2,1},   /* 0x8B-0x8E: src 1,0,3,2 mirror */
-            { 4,0},{ 5,0},{ 6,0},{ 7,0},   /* 0x8F-0x92: src 4-7 normal */
-            { 8,0},{ 9,0},{10,0},{11,0},   /* 0x93-0x96: src 8-11 normal */
-            {12,0},{13,0},                  /* 0x97-0x98: src 12-13 normal */
-            { 5,1},{ 4,1},{ 7,1},{ 6,1},   /* 0x99-0x9C: mirror src 5,4,7,6 */
-            {10,1},{ 9,1},{ 8,1},           /* 0x9D-0x9F: mirror src 10,9,8 */
-            {13,1},{12,1},{11,1},           /* 0xA0-0xA2: mirror src 13,12,11 */
-        };
-        /* Tercio 0: base 0x87, tercio 1: base 0x40, tercio 2: base 0x1F */
-        static const uint16_t tbase[3] = {0x0087u, 0x0140u, 0x021Fu};
-        for (uint8_t t = 0u; t < 3u; t++) {
-            for (uint8_t i = 0u; i < 28u; i++) {
-                uint8_t src_idx  = enemy_map[i][0];
-                bool    mirror   = enemy_map[i][1] != 0u;
-                uint16_t vram    = (uint16_t)(tbase[t] + i);
-                uint32_t rom_off = 0x5916u + (uint32_t)src_idx * 16u;
-                tiles_load_interleaved_tile(rom_off, vram, mirror);
-            }
-        }
-    }
-
-    /* Puertas en tercio 0 (legacy: tiles_vram_idx_door()=0x0D).
-     * Z80 las carga a tercios 1+2 (0x019F/0x01AF/0x029F), pero
-     * el port aún no traduce nombre-tabla por tercio. */
-    load_tileset(ROM_TS_DOOR_EXTRA, 0x9Fu, 16u);
-    load_tileset(ROM_TS_DOOR, 0x0Du, 1u);
-
-    /* Contadores de animación */
-    g_anim_ctr[0] = 0x72u;
-    g_anim_ctr[1] = 0xAFu;
-    g_anim_ctr[2] = 0x00u;
+    /* Decode shape streams from ROM -> name table + colmap */
+    room_decode_shapes();
 
     /* Reset contadores globales */
     g_state_flags  = 0;
@@ -759,4 +1252,7 @@ void room_init(void)
     memset(g_sprite_table, 0, sizeof(g_sprite_table));
     memset(g_object_table, 0, sizeof(g_object_table));
     memset(g_tilemap,      0, sizeof(g_tilemap));
+    memset(g_map,          0, sizeof(g_map));
+    /* Persistence bitfields: all 1 = everything present (uncollected) */
+    memset(g_map + 0x00D, 0xFF, 0x2C6);
 }
